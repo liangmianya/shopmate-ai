@@ -1,0 +1,16 @@
+node_modules
+dist
+.env
+.env.local
+*.db
+*.db-journal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.log
+*.tsbuildinfo
+tmp*.png
+Quicker_*.png
+.workbuddy/
+backend/data/app.sqlite
+backend/materials/organized

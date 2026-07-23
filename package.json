@@ -1,0 +1,20 @@
+{
+  "name": "running-agent-cs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RAG and CLI Tool Calling Agent workspace for a running gear ecommerce customer service scenario.",
+  "scripts": {
+    "install:all": "npm install --workspaces",
+    "dev": "concurrently \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "build": "npm run build -w backend && npm run build -w frontend",
+    "typecheck": "npm run typecheck -w backend && npm run typecheck -w frontend",
+    "seed": "npm run seed -w backend"
+  },
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.2.0"
+  }
+}
