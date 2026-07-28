@@ -5,10 +5,13 @@ import {
   getPublicLlmSettings,
   getPublicSearchSettings,
   getPublicWecomSettings,
+  getSystemPromptSettings,
   updateEmbeddingSettings,
   updateLlmSettings,
   updateSearchSettings,
-  updateWecomSettings
+  updateWecomSettings,
+  updateSystemPromptSettings,
+  resetSystemPromptSettings
 } from '../services/settingsService.js';
 
 const router = Router();
@@ -33,6 +36,10 @@ const wecomSettingsSchema = z.object({
   token: z.string().optional(),
   encodingAesKey: z.string().optional(),
   openKfid: z.string().optional()
+});
+
+const systemPromptSettingsSchema = z.object({
+  prompt: z.string().trim().min(20).max(12000)
 });
 
 router.get('/llm', (_req, res) => {
@@ -89,6 +96,24 @@ router.put('/wecom', (req, res) => {
   }
 
   res.json(updateWecomSettings(parsed.data));
+});
+
+router.get('/system-prompt', (_req, res) => {
+  res.json(getSystemPromptSettings());
+});
+
+router.put('/system-prompt', (req, res) => {
+  const parsed = systemPromptSettingsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  res.json(updateSystemPromptSettings(parsed.data));
+});
+
+router.delete('/system-prompt', (_req, res) => {
+  res.json(resetSystemPromptSettings());
 });
 
 export default router;

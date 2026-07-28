@@ -87,4 +87,32 @@ router.post('/', (req, res) => {
   res.status(201).json({ chunks: created.map(mapKnowledgeRow) });
 });
 
+router.delete('/:id', (req, res) => {
+  const row = db
+    .prepare('SELECT id, type, title, content, tags, source, created_at FROM knowledge_chunks WHERE id = ?')
+    .get(req.params.id) as
+    | {
+        id: string;
+        type: string;
+        title: string;
+        content: string;
+        tags: string;
+        source: string;
+        created_at: string;
+      }
+    | undefined;
+
+  if (!row) {
+    res.status(404).json({ error: 'Knowledge item not found' });
+    return;
+  }
+
+  db.transaction(() => {
+    db.prepare('DELETE FROM knowledge_embeddings WHERE chunk_id = ?').run(req.params.id);
+    db.prepare('DELETE FROM knowledge_chunks WHERE id = ?').run(req.params.id);
+  })();
+
+  res.json({ deleted: mapKnowledgeRow(row) });
+});
+
 export default router;

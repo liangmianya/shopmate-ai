@@ -16,7 +16,7 @@ const intentKnowledgePriority: Record<Intent, KnowledgeType[]> = {
 function tokenize(text: string) {
   const normalized = text.toLowerCase();
   const words: string[] = [...(normalized.match(/[a-z0-9]+|[\u4e00-\u9fa5]{1,3}/g) ?? [])];
-  const keywords = ['宽脚', '脚宽', '脚背', '半马', '全马', '竞速', '碳板', '退货', '换货', '磨损', '膝盖', '缓震', '慢跑', '压缩裤'];
+  const keywords = ['商品', '品牌', '类型', '规格', '尺寸', '尺码', '库存', '价格', '链接', '购买', '下单', '发货', '物流', '退货', '换货', '售后', '赔付'];
   for (const keyword of keywords) {
     if (normalized.includes(keyword)) {
       words.push(keyword);
@@ -54,7 +54,7 @@ function loadKnowledgeChunks() {
     }));
 
   const productRows = db
-    .prepare('SELECT id, name, brand, category, price, stock, features, size_guide, target_users, scene FROM products')
+    .prepare('SELECT id, name, brand, category, price, stock, features, size_guide, target_users, scene, purchase_url FROM products')
     .all() as Array<{
       id: string;
       name: string;
@@ -66,6 +66,7 @@ function loadKnowledgeChunks() {
       size_guide: string;
       target_users: string;
       scene: string;
+      purchase_url: string;
     }>;
 
   const productChunks: KnowledgeChunk[] = productRows.map((product) => ({
@@ -81,7 +82,8 @@ function loadKnowledgeChunks() {
       `特性：${product.features}`,
       product.size_guide ? `尺码建议：${product.size_guide}` : '',
       product.target_users ? `适合人群：${product.target_users}` : '',
-      product.scene ? `适用场景：${product.scene}` : ''
+      product.scene ? `适用场景：${product.scene}` : '',
+      product.purchase_url ? `购买链接：${product.purchase_url}` : ''
     ].filter(Boolean).join('；'),
     tags: [product.name, product.brand, product.category, product.scene].filter(Boolean),
     source: `product:${product.id}`

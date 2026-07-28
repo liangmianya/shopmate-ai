@@ -9,11 +9,11 @@ export function detectIntent(input: string): Intent {
     return includesAny(text, ['必须', '投诉', '赔', '生气', '没人']) ? 'complaint' : 'after_sale';
   }
 
-  if (includesAny(text, ['尺码', '码', '脚宽', '宽脚', '脚背', '腿围', '身高', '体重'])) {
+  if (includesAny(text, ['尺码', '尺寸', '规格', '型号', '码数', '大小', '身高', '体重'])) {
     return 'size_recommendation';
   }
 
-  if (includesAny(text, ['推荐', '适合', '买哪', '半马', '全马', '慢跑', '膝盖'])) {
+  if (includesAny(text, ['推荐', '适合', '买哪', '怎么选', '选哪', '预算', '通勤', '送礼', '场景'])) {
     return 'product_recommendation';
   }
 

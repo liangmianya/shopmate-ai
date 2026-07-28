@@ -29,6 +29,7 @@ export type ProductKnowledge = {
   sizeGuide: string;
   targetUsers: string;
   scene: string;
+  purchaseUrl: string;
 };
 
 export type WebSource = {
@@ -135,6 +136,11 @@ export type WecomSettings = {
   encodingAesKeyPreview: string;
   openKfid: string;
   callbackPath: string;
+};
+
+export type SystemPromptSettings = {
+  prompt: string;
+  customized: boolean;
 };
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -347,10 +353,17 @@ export function createProducts(items: Array<{
   sizeGuide?: string;
   targetUsers?: string;
   scene?: string;
+  purchaseUrl?: string;
 }>) {
-  return request<{ products: ProductKnowledge[] }>('/api/products', {
+  return request<{ products: ProductKnowledge[]; skippedCount: number }>('/api/products', {
     method: 'POST',
     body: JSON.stringify({ items })
+  });
+}
+
+export function deleteProduct(id: string) {
+  return request<{ deleted: ProductKnowledge }>(`/api/products/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
   });
 }
 
@@ -367,6 +380,12 @@ export function createKnowledge(items: Array<{
   return request<{ chunks: QaKnowledge[] }>('/api/knowledge', {
     method: 'POST',
     body: JSON.stringify({ items })
+  });
+}
+
+export function deleteKnowledge(id: string) {
+  return request<{ deleted: QaKnowledge }>(`/api/knowledge/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
   });
 }
 
@@ -418,5 +437,22 @@ export function saveWecomSettings(input: {
   return request<WecomSettings>('/api/settings/wecom', {
     method: 'PUT',
     body: JSON.stringify(input)
+  });
+}
+
+export function loadSystemPromptSettings() {
+  return request<SystemPromptSettings>('/api/settings/system-prompt');
+}
+
+export function saveSystemPromptSettings(input: { prompt: string }) {
+  return request<SystemPromptSettings>('/api/settings/system-prompt', {
+    method: 'PUT',
+    body: JSON.stringify(input)
+  });
+}
+
+export function resetSystemPromptSettings() {
+  return request<SystemPromptSettings>('/api/settings/system-prompt', {
+    method: 'DELETE'
   });
 }

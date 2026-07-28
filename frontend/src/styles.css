@@ -671,6 +671,56 @@ input:focus,
   align-items: start;
 }
 
+.systemPromptPanel {
+  margin-bottom: 20px;
+}
+
+.systemPromptPanel .panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.systemPromptPanel .panelHeader > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.promptStatus {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.promptStatus.customized {
+  background: #e8f3e9;
+  color: #276237;
+}
+
+.systemPromptInput {
+  min-height: 236px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.systemPromptFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.systemPromptFooter > span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .settingsForm {
   display: flex;
   flex-direction: column;
@@ -1413,6 +1463,12 @@ input:focus,
   margin-bottom: 8px;
 }
 
+.knowledgeItemHeader > div {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
 .knowledgeItemHeader span,
 .tagRow span,
 .productFacts span {
@@ -1435,6 +1491,36 @@ input:focus,
   line-height: 1.4;
 }
 
+.iconButton {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #dededb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #4d4d4d;
+  cursor: pointer;
+}
+
+.iconButton:hover:not(:disabled) {
+  border-color: #111111;
+  color: #111111;
+}
+
+.iconButton.danger:hover:not(:disabled) {
+  border-color: #d92d20;
+  background: #fff4f2;
+  color: #b42318;
+}
+
+.iconButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .knowledgeItem p,
 .productKnowledgeItem p {
   color: #4d4d4d;
@@ -1452,6 +1538,23 @@ input:focus,
 
 .productFacts {
   margin: 0 0 10px;
+}
+
+.productLink {
+  width: fit-content;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  color: #111111;
+  font-size: 12px;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.productLink:hover {
+  text-decoration: underline;
 }
 
 .compactFields {
@@ -2096,5 +2199,19 @@ input:focus {
 @media (max-width: 820px) {
   .workspace {
     padding: 16px;
+  }
+
+  .systemPromptPanel .panelHeader,
+  .systemPromptFooter {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .systemPromptFooter .settingsActions {
+    width: 100%;
+  }
+
+  .systemPromptFooter .settingsActions button {
+    flex: 1;
   }
 }

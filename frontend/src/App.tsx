@@ -22,6 +22,7 @@ import {
   Send,
   Settings2,
   Sparkles,
+  Trash2,
   Wrench,
   X
 } from 'lucide-react';
@@ -35,21 +36,27 @@ import {
   ProductKnowledge,
   QaKnowledge,
   SearchSettings,
+  SystemPromptSettings,
   WecomSettings,
   approveSuggestion,
   createKnowledge,
   createProducts,
+  deleteKnowledge,
+  deleteProduct,
   loadEmbeddingSettings,
   loadKnowledge,
   loadLlmSettings,
   loadProducts,
   loadSearchSettings,
   loadSuggestions,
+  loadSystemPromptSettings,
   loadWecomSettings,
+  resetSystemPromptSettings,
   runAgentTaskStream,
   saveEmbeddingSettings,
   saveLlmSettings,
   saveSearchSettings,
+  saveSystemPromptSettings,
   saveWecomSettings,
   sendChatStream
 } from './api';
@@ -112,8 +119,8 @@ const tabs: Array<{
   },
   {
     id: 'settings',
-    label: '模型设置',
-    description: 'API URL 与 Key',
+    label: '系统设置',
+    description: '提示词与模型配置',
     icon: KeyRound
   },
   {
@@ -137,9 +144,9 @@ const tabs: Array<{
 ];
 
 const demoQuestions = [
-  '我平时 42 码，脚有点宽，想买一双半马比赛鞋，推荐哪款？',
-  '我穿了一次发现鞋底磨得很厉害，想退货，你们必须给我退。',
-  '宽脚能穿竞速鞋吗？'
+  '我想买一款适合通勤用的商品，预算 200 左右，有推荐吗？',
+  '我收到后发现不太合适，想退货，需要满足什么条件？',
+  '这个商品有购买链接吗？'
 ];
 
 const agentExamples = [
@@ -746,7 +753,7 @@ function CustomerPage({ onRefresh }: { onRefresh: () => Promise<void> }) {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: '你好，我是跑步装备客服助手。可以问我商品推荐、尺码选择、售后规则或物流订单问题。'
+      content: '你好，我是电商客服助手。可以问我商品推荐、规格选择、售后规则或物流订单问题。'
     }
   ]);
   const [input, setInput] = useState(demoQuestions[0]);
@@ -993,13 +1000,16 @@ function KnowledgePage({
   products,
   onApprove,
   onCreateQa,
-  onCreateProducts
+  onCreateProducts,
+  onDeleteQa,
+  onDeleteProduct
 }: {
   suggestions: KnowledgeSuggestion[];
   qaItems: QaKnowledge[];
   products: ProductKnowledge[];
   onApprove: (id: string) => Promise<void>;
   onCreateQa: (items: Array<{ question: string; answer: string; tags: string[] }>) => Promise<void>;
+  onDeleteQa: (id: string) => Promise<void>;
   onCreateProducts: (items: Array<{
     name: string;
     brand: string;
@@ -1010,7 +1020,9 @@ function KnowledgePage({
     sizeGuide?: string;
     targetUsers?: string;
     scene?: string;
-  }>) => Promise<void>;
+    purchaseUrl?: string;
+  }>) => Promise<{ createdCount: number; skippedCount: number }>;
+  onDeleteProduct: (id: string) => Promise<void>;
 }) {
   const [library, setLibrary] = useState<'qa' | 'products'>('qa');
   const [createOpen, setCreateOpen] = useState(false);
@@ -1024,12 +1036,19 @@ function KnowledgePage({
   const [productPrice, setProductPrice] = useState('0');
   const [productStock, setProductStock] = useState('0');
   const [productFeatures, setProductFeatures] = useState('');
+  const [productPurchaseUrl, setProductPurchaseUrl] = useState('');
   const [productBatch, setProductBatch] = useState('');
   const [libraryNotice, setLibraryNotice] = useState('');
+  const [deletingId, setDeletingId] = useState('');
+  const [creatingTarget, setCreatingTarget] = useState<'qa' | 'qaBatch' | 'product' | 'productBatch' | ''>('');
   const visibleQa = qaItems.filter((item) => item.type !== 'product');
   const parseTags = (value: string) => value.split(/[,，、]/).map((tag) => tag.trim()).filter(Boolean);
 
   async function submitQa() {
+    if (creatingTarget) {
+      return;
+    }
+
     const question = qaQuestion.trim();
     const answer = qaAnswer.trim();
     if (!question || !answer) {
@@ -1037,15 +1056,24 @@ function KnowledgePage({
       return;
     }
 
-    await onCreateQa([{ question, answer, tags: parseTags(qaTags) }]);
-    setQaQuestion('');
-    setQaAnswer('');
-    setQaTags('');
-    setLibraryNotice('已新增 1 条问答。');
-    setCreateOpen(false);
+    setCreatingTarget('qa');
+    try {
+      await onCreateQa([{ question, answer, tags: parseTags(qaTags) }]);
+      setQaQuestion('');
+      setQaAnswer('');
+      setQaTags('');
+      setLibraryNotice('已新增 1 条问答。');
+      setCreateOpen(false);
+    } finally {
+      setCreatingTarget('');
+    }
   }
 
   async function submitQaBatch() {
+    if (creatingTarget) {
+      return;
+    }
+
     const items = qaBatch
       .split('\n')
       .map((line) => line.trim())
@@ -1061,13 +1089,22 @@ function KnowledgePage({
       return;
     }
 
-    await onCreateQa(items);
-    setQaBatch('');
-    setLibraryNotice(`已批量新增 ${items.length} 条问答。`);
-    setCreateOpen(false);
+    setCreatingTarget('qaBatch');
+    try {
+      await onCreateQa(items);
+      setQaBatch('');
+      setLibraryNotice(`已批量新增 ${items.length} 条问答。`);
+      setCreateOpen(false);
+    } finally {
+      setCreatingTarget('');
+    }
   }
 
   async function submitProduct() {
+    if (creatingTarget) {
+      return;
+    }
+
     const name = productName.trim();
     const brand = productBrand.trim();
     const category = productCategory.trim();
@@ -1077,31 +1114,42 @@ function KnowledgePage({
       return;
     }
 
-    await onCreateProducts([{
-      name,
-      brand,
-      category,
-      features,
-      price: Number(productPrice) || 0,
-      stock: Math.max(0, Math.floor(Number(productStock) || 0))
-    }]);
-    setProductName('');
-    setProductBrand('');
-    setProductCategory('');
-    setProductPrice('0');
-    setProductStock('0');
-    setProductFeatures('');
-    setLibraryNotice('已新增 1 个商品。');
-    setCreateOpen(false);
+    setCreatingTarget('product');
+    try {
+      const result = await onCreateProducts([{
+        name,
+        brand,
+        category,
+        features,
+        price: Number(productPrice) || 0,
+        stock: Math.max(0, Math.floor(Number(productStock) || 0)),
+        purchaseUrl: productPurchaseUrl.trim()
+      }]);
+      setProductName('');
+      setProductBrand('');
+      setProductCategory('');
+      setProductPrice('0');
+      setProductStock('0');
+      setProductFeatures('');
+      setProductPurchaseUrl('');
+      setLibraryNotice(result.createdCount ? '已新增 1 个商品。' : '已跳过重复商品。');
+      setCreateOpen(false);
+    } finally {
+      setCreatingTarget('');
+    }
   }
 
   async function submitProductBatch() {
+    if (creatingTarget) {
+      return;
+    }
+
     const items = productBatch
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line) => {
-        const [name = '', category = '', brand = '', features = '', stock = '0', price = '0'] = line
+        const [name = '', category = '', brand = '', features = '', stock = '0', price = '0', purchaseUrl = ''] = line
           .split('|')
           .map((part) => part.trim());
         return {
@@ -1110,20 +1158,58 @@ function KnowledgePage({
           brand,
           features,
           stock: Math.max(0, Math.floor(Number(stock) || 0)),
-          price: Number(price) || 0
+          price: Number(price) || 0,
+          purchaseUrl
         };
       })
       .filter((item) => item.name && item.category && item.brand && item.features);
 
     if (!items.length) {
-      setLibraryNotice('批量商品格式：商品名 | 商品类型 | 品牌 | 特性 | 库存 | 价格。');
+      setLibraryNotice('批量商品格式：商品名 | 商品类型 | 品牌 | 特性 | 库存 | 价格 | 购买链接。');
       return;
     }
 
-    await onCreateProducts(items);
-    setProductBatch('');
-    setLibraryNotice(`已批量新增 ${items.length} 个商品。`);
-    setCreateOpen(false);
+    setCreatingTarget('productBatch');
+    try {
+      const result = await onCreateProducts(items);
+      setProductBatch('');
+      setLibraryNotice(`已批量新增 ${result.createdCount} 个商品，跳过 ${result.skippedCount} 个重复商品。`);
+      setCreateOpen(false);
+    } finally {
+      setCreatingTarget('');
+    }
+  }
+
+  async function deleteQaItem(item: QaKnowledge) {
+    if (!window.confirm(`确定删除问答“${item.question}”吗？`)) {
+      return;
+    }
+
+    setDeletingId(item.id);
+    try {
+      await onDeleteQa(item.id);
+      setLibraryNotice('已删除 1 条问答。');
+    } catch {
+      setLibraryNotice('删除问答失败，请稍后重试。');
+    } finally {
+      setDeletingId('');
+    }
+  }
+
+  async function deleteProductItem(product: ProductKnowledge) {
+    if (!window.confirm(`确定删除商品“${product.name}”吗？`)) {
+      return;
+    }
+
+    setDeletingId(product.id);
+    try {
+      await onDeleteProduct(product.id);
+      setLibraryNotice('已删除 1 个商品。');
+    } catch {
+      setLibraryNotice('删除商品失败，请稍后重试。');
+    } finally {
+      setDeletingId('');
+    }
   }
 
   return (
@@ -1170,8 +1256,20 @@ function KnowledgePage({
               visibleQa.map((item) => (
                 <article key={item.id} className="knowledgeItem">
                   <div className="knowledgeItemHeader">
-                    <span>{item.type}</span>
-                    <strong>{item.question}</strong>
+                    <div>
+                      <span>{item.type}</span>
+                      <strong>{item.question}</strong>
+                    </div>
+                    <button
+                      aria-label={`删除问答：${item.question}`}
+                      className="iconButton danger"
+                      disabled={deletingId === item.id}
+                      onClick={() => deleteQaItem(item)}
+                      title="删除问答"
+                      type="button"
+                    >
+                      <Trash2 size={15} />
+                    </button>
                   </div>
                   <p>{item.answer}</p>
                   <div className="tagRow">
@@ -1228,8 +1326,20 @@ function KnowledgePage({
             products.map((product) => (
               <article key={product.id} className="productKnowledgeItem">
                 <div className="knowledgeItemHeader">
-                  <span>{product.category}</span>
-                  <strong>{product.name}</strong>
+                  <div>
+                    <span>{product.category}</span>
+                    <strong>{product.name}</strong>
+                  </div>
+                  <button
+                    aria-label={`删除商品：${product.name}`}
+                    className="iconButton danger"
+                    disabled={deletingId === product.id}
+                    onClick={() => deleteProductItem(product)}
+                    title="删除商品"
+                    type="button"
+                  >
+                    <Trash2 size={15} />
+                  </button>
                 </div>
                 <div className="productFacts">
                   <span>品牌：{product.brand}</span>
@@ -1237,6 +1347,12 @@ function KnowledgePage({
                   <span>价格：¥{product.price}</span>
                 </div>
                 <p>{product.features}</p>
+                {product.purchaseUrl && (
+                  <a className="productLink" href={product.purchaseUrl} target="_blank" rel="noreferrer">
+                    <Link size={14} />
+                    购买链接
+                  </a>
+                )}
                 <small>{product.scene}</small>
               </article>
             ))
@@ -1266,7 +1382,7 @@ function KnowledgePage({
                   <div className="settingsForm">
                     <label>
                       <span>问题</span>
-                      <input value={qaQuestion} onChange={(event) => setQaQuestion(event.target.value)} placeholder="例：宽脚怎么选竞速鞋？" />
+                      <input value={qaQuestion} onChange={(event) => setQaQuestion(event.target.value)} placeholder="例：这款商品适合敏感肌吗？" />
                     </label>
                     <label>
                       <span>答案</span>
@@ -1274,11 +1390,11 @@ function KnowledgePage({
                     </label>
                     <label>
                       <span>标签</span>
-                      <input value={qaTags} onChange={(event) => setQaTags(event.target.value)} placeholder="尺码,宽脚,竞速鞋" />
+                      <input value={qaTags} onChange={(event) => setQaTags(event.target.value)} placeholder="适用人群,敏感肌,售前咨询" />
                     </label>
-                    <button className="primaryButton" onClick={submitQa} type="button">
+                    <button className="primaryButton" disabled={Boolean(creatingTarget)} onClick={submitQa} type="button">
                       <Check size={16} />
-                      新增问答
+                      {creatingTarget === 'qa' ? '新增中' : '新增问答'}
                     </button>
                   </div>
                 </section>
@@ -1289,11 +1405,11 @@ function KnowledgePage({
                   <textarea
                     value={qaBatch}
                     onChange={(event) => setQaBatch(event.target.value)}
-                    placeholder={'问题 | 答案 | 标签1,标签2\n宽脚怎么选竞速鞋？ | 优先宽楦，没有宽楦建议大半码。 | 尺码,宽脚'}
+                    placeholder={'问题 | 答案 | 标签1,标签2\n这款商品适合敏感肌吗？ | 建议先查看成分和适用说明，敏感肌可先局部试用。 | 适用人群,敏感肌'}
                     rows={8}
                   />
-                  <button className="smallButton" onClick={submitQaBatch} type="button">
-                    批量新增
+                  <button className="smallButton" disabled={Boolean(creatingTarget)} onClick={submitQaBatch} type="button">
+                    {creatingTarget === 'qaBatch' ? '导入中' : '批量新增'}
                   </button>
                 </section>
               </div>
@@ -1304,16 +1420,16 @@ function KnowledgePage({
                   <div className="settingsForm">
                     <label>
                       <span>商品名</span>
-                      <input value={productName} onChange={(event) => setProductName(event.target.value)} placeholder="例：疾风 Pro 碳板竞速跑鞋" />
+                      <input value={productName} onChange={(event) => setProductName(event.target.value)} placeholder="例：多效修护眼霜" />
                     </label>
                     <div className="compactFields">
                       <label>
                         <span>商品类型</span>
-                        <input value={productCategory} onChange={(event) => setProductCategory(event.target.value)} placeholder="竞速跑鞋" />
+                        <input value={productCategory} onChange={(event) => setProductCategory(event.target.value)} placeholder="眼部护理" />
                       </label>
                       <label>
                         <span>品牌</span>
-                        <input value={productBrand} onChange={(event) => setProductBrand(event.target.value)} placeholder="RunPeak" />
+                        <input value={productBrand} onChange={(event) => setProductBrand(event.target.value)} placeholder="VitaSkin" />
                       </label>
                     </div>
                     <div className="compactFields">
@@ -1330,9 +1446,13 @@ function KnowledgePage({
                       <span>特性</span>
                       <textarea value={productFeatures} onChange={(event) => setProductFeatures(event.target.value)} placeholder="填写商品核心卖点和适用场景" rows={4} />
                     </label>
-                    <button className="primaryButton" onClick={submitProduct} type="button">
+                    <label>
+                      <span>购买链接</span>
+                      <input value={productPurchaseUrl} onChange={(event) => setProductPurchaseUrl(event.target.value)} placeholder="https://example.com/products/..." type="url" />
+                    </label>
+                    <button className="primaryButton" disabled={Boolean(creatingTarget)} onClick={submitProduct} type="button">
                       <Check size={16} />
-                      新增商品
+                      {creatingTarget === 'product' ? '新增中' : '新增商品'}
                     </button>
                   </div>
                 </section>
@@ -1343,11 +1463,11 @@ function KnowledgePage({
                   <textarea
                     value={productBatch}
                     onChange={(event) => setProductBatch(event.target.value)}
-                    placeholder={'商品名 | 商品类型 | 品牌 | 特性 | 库存 | 价格\n疾风 Pro | 竞速跑鞋 | RunPeak | 全掌碳板，适合半马比赛 | 42 | 899'}
+                    placeholder={'商品名 | 商品类型 | 品牌 | 特性 | 库存 | 价格 | 购买链接\n多效修护眼霜 | 眼部护理 | VitaSkin | 淡化黑眼圈，改善干纹 | 86 | 199 | https://example.com/products/eye-cream'}
                     rows={8}
                   />
-                  <button className="smallButton" onClick={submitProductBatch} type="button">
-                    批量新增
+                  <button className="smallButton" disabled={Boolean(creatingTarget)} onClick={submitProductBatch} type="button">
+                    {creatingTarget === 'productBatch' ? '导入中' : '批量新增'}
                   </button>
                 </section>
               </div>
@@ -1365,6 +1485,7 @@ function SettingsPage() {
   const [llmSettings, setLlmSettings] = useState<LlmSettings>();
   const [embeddingSettings, setEmbeddingSettings] = useState<EmbeddingSettings>();
   const [searchSettings, setSearchSettings] = useState<SearchSettings>();
+  const [systemPromptSettings, setSystemPromptSettings] = useState<SystemPromptSettings>();
   const [llmBaseUrl, setLlmBaseUrl] = useState('https://api.openai.com/v1');
   const [llmModel, setLlmModel] = useState('gpt-4o-mini');
   const [llmApiKey, setLlmApiKey] = useState('');
@@ -1375,12 +1496,13 @@ function SettingsPage() {
   const [searchBaseUrl, setSearchBaseUrl] = useState('https://api.bochaai.com/v1');
   const [searchApiKey, setSearchApiKey] = useState('');
   const [searchCount, setSearchCount] = useState('5');
-  const [busyTarget, setBusyTarget] = useState<'llm' | 'embedding' | 'search' | ''>('');
+  const [systemPrompt, setSystemPrompt] = useState('');
+  const [busyTarget, setBusyTarget] = useState<'llm' | 'embedding' | 'search' | 'systemPrompt' | ''>('');
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
-    Promise.all([loadLlmSettings(), loadEmbeddingSettings(), loadSearchSettings()])
-      .then(([llm, embedding, search]) => {
+    Promise.all([loadLlmSettings(), loadEmbeddingSettings(), loadSearchSettings(), loadSystemPromptSettings()])
+      .then(([llm, embedding, search, promptSettings]) => {
         setLlmSettings(llm);
         setLlmBaseUrl(llm.baseUrl);
         setLlmModel(llm.model);
@@ -1391,8 +1513,10 @@ function SettingsPage() {
         setSearchEnabled(search.enabled);
         setSearchBaseUrl(search.baseUrl);
         setSearchCount(String(search.count));
+        setSystemPromptSettings(promptSettings);
+        setSystemPrompt(promptSettings.prompt);
       })
-      .catch(() => setNotice('读取模型配置失败，请确认后端服务已启动。'));
+      .catch(() => setNotice('读取系统配置失败，请确认后端服务已启动。'));
   }, []);
 
   async function submitLlm() {
@@ -1452,12 +1576,44 @@ function SettingsPage() {
     }
   }
 
+  async function submitSystemPrompt() {
+    setBusyTarget('systemPrompt');
+    setNotice('');
+
+    try {
+      const next = await saveSystemPromptSettings({ prompt: systemPrompt });
+      setSystemPromptSettings(next);
+      setSystemPrompt(next.prompt);
+      setNotice('业务系统提示词已保存，后续运营 Agent 和智能客服会使用新配置。');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '保存失败。');
+    } finally {
+      setBusyTarget('');
+    }
+  }
+
+  async function resetSystemPrompt() {
+    setBusyTarget('systemPrompt');
+    setNotice('');
+
+    try {
+      const next = await resetSystemPromptSettings();
+      setSystemPromptSettings(next);
+      setSystemPrompt(next.prompt);
+      setNotice('已恢复通用电商的默认业务系统提示词。');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '恢复默认失败。');
+    } finally {
+      setBusyTarget('');
+    }
+  }
+
   return (
     <section className="workspacePage">
       <PageHeader
-        eyebrow="LLM Settings"
-        title="模型设置"
-        description="配置客服对话使用的 OpenAI 兼容 API。保存后智能客服会优先调用大模型，失败时仍保留本地兜底。"
+        eyebrow="System Settings"
+        title="系统设置"
+        description="维护店铺业务提示词与模型服务配置。提示词保存后立即用于运营 Agent 和智能客服。"
         action={
           <Stat
             label="联网搜索"
@@ -1466,6 +1622,52 @@ function SettingsPage() {
           />
         }
       />
+
+      <section className="panel flat systemPromptPanel">
+        <div className="panelHeader">
+          <div>
+            <span className="iconBadge"><Bot size={18} /></span>
+            <h2>业务系统提示词</h2>
+          </div>
+          <span className={cx('promptStatus', systemPromptSettings?.customized && 'customized')}>
+            {systemPromptSettings?.customized ? '自定义配置' : '默认配置'}
+          </span>
+        </div>
+
+        <form
+          className="settingsForm"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitSystemPrompt();
+          }}
+        >
+          <label>
+            <span>系统提示词</span>
+            <textarea
+              className="systemPromptInput"
+              value={systemPrompt}
+              onChange={(event) => setSystemPrompt(event.target.value)}
+              placeholder="定义店铺所属领域、服务范围、话术风格、业务规则与边界。"
+              rows={12}
+              maxLength={12000}
+            />
+          </label>
+
+          <div className="systemPromptFooter">
+            <span>{systemPrompt.length}/12000</span>
+            <div className="settingsActions">
+              <button className="ghostButton" disabled={busyTarget === 'systemPrompt'} onClick={resetSystemPrompt} type="button">
+                <RefreshCcw size={16} />
+                恢复默认
+              </button>
+              <button className="primaryButton" disabled={busyTarget === 'systemPrompt'} type="submit">
+                <Check size={16} />
+                {busyTarget === 'systemPrompt' ? '保存中' : '保存系统提示词'}
+              </button>
+            </div>
+          </div>
+        </form>
+      </section>
 
       <div className="settingsGrid">
         <section className="panel flat">
@@ -1940,8 +2142,23 @@ export function App() {
     sizeGuide?: string;
     targetUsers?: string;
     scene?: string;
+    purchaseUrl?: string;
   }>) {
-    await createProducts(items);
+    const result = await createProducts(items);
+    await refreshMeta();
+    return {
+      createdCount: result.products.length,
+      skippedCount: result.skippedCount
+    };
+  }
+
+  async function handleDeleteQa(id: string) {
+    await deleteKnowledge(id);
+    await refreshMeta();
+  }
+
+  async function handleDeleteProduct(id: string) {
+    await deleteProduct(id);
     await refreshMeta();
   }
 
@@ -2007,6 +2224,8 @@ export function App() {
             onApprove={handleApprove}
             onCreateQa={handleCreateQa}
             onCreateProducts={handleCreateProducts}
+            onDeleteQa={handleDeleteQa}
+            onDeleteProduct={handleDeleteProduct}
           />
         )}
         {activeTab === 'settings' && <SettingsPage />}

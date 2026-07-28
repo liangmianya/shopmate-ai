@@ -28,6 +28,7 @@ export function migrate() {
       size_guide TEXT,
       target_users TEXT,
       scene TEXT,
+      purchase_url TEXT,
       created_at TEXT,
       updated_at TEXT
     );
@@ -131,6 +132,11 @@ export function migrate() {
       UNIQUE(channel, external_msg_id)
     );
   `);
+
+  const productColumns = db.prepare('PRAGMA table_info(products)').all() as Array<{ name: string }>;
+  if (!productColumns.some((column) => column.name === 'purchase_url')) {
+    db.prepare('ALTER TABLE products ADD COLUMN purchase_url TEXT DEFAULT ""').run();
+  }
 }
 
 export function resetData() {

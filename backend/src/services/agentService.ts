@@ -6,7 +6,7 @@ import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { db } from '../db/database.js';
-import { getLlmSettings } from './settingsService.js';
+import { getLlmSettings, getSystemPromptSettings } from './settingsService.js';
 import type { AgentToolResult, AgentTraceStep } from '../types.js';
 
 const execFileAsync = promisify(execFile);
@@ -107,6 +107,19 @@ const suggestionSchema = z.object({
   reason: z.string().min(1).max(800)
 });
 
+const productCreateSchema = z.object({
+  name: z.string().min(1).max(160),
+  brand: z.string().min(1).max(120),
+  category: z.string().min(1).max(120),
+  price: z.number().nonnegative().default(0),
+  stock: z.number().int().nonnegative().default(0),
+  features: z.string().min(1).max(2000),
+  sizeGuide: z.string().max(1000).default(''),
+  targetUsers: z.string().max(1000).default(''),
+  scene: z.string().max(1000).default(''),
+  purchaseUrl: z.string().max(1000).default('')
+});
+
 const knowledgeSearchSchema = z.object({
   query: z.string().min(2).max(120),
   limit: z.number().int().min(1).max(50).optional()
@@ -171,6 +184,60 @@ const toolSchemas = [
       parameters: {
         type: 'object',
         properties: {},
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_product',
+      description: 'Create one formal product entry in the product library. Use this when the shop owner asks to add, supplement, or import a product. It skips duplicates by name + brand + category.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description: 'Product name, without brand if the brand is separately provided.'
+          },
+          brand: {
+            type: 'string',
+            description: 'Product brand.'
+          },
+          category: {
+            type: 'string',
+            description: 'Product category or product type.'
+          },
+          price: {
+            type: 'number',
+            description: 'Product price. Use 0 only if the user did not provide a price.'
+          },
+          stock: {
+            type: 'number',
+            description: 'Current stock count. Use 0 only if the user did not provide stock.'
+          },
+          features: {
+            type: 'string',
+            description: 'Key product features, selling points, suitable users, or usage notes.'
+          },
+          sizeGuide: {
+            type: 'string',
+            description: 'Optional size, specification, shade, or usage guidance.'
+          },
+          targetUsers: {
+            type: 'string',
+            description: 'Optional target users.'
+          },
+          scene: {
+            type: 'string',
+            description: 'Optional usage scene.'
+          },
+          purchaseUrl: {
+            type: 'string',
+            description: 'Optional purchase link.'
+          }
+        },
+        required: ['name', 'brand', 'category', 'price', 'stock', 'features'],
         additionalProperties: false
       }
     }
@@ -311,6 +378,18 @@ function isDangerousCommand(command: string) {
   ].some((token) => normalized.includes(token));
 }
 
+function mutatesProductsTable(text: string) {
+  const normalized = text.toLowerCase().replace(/\s+/g, ' ');
+  return [
+    'insert into products',
+    'update products',
+    'delete from products',
+    'drop table products',
+    'alter table products',
+    'replace into products'
+  ].some((token) => normalized.includes(token));
+}
+
 function saveToolLog(taskId: string, result: AgentToolResult) {
   db.prepare(`
     INSERT INTO tool_call_logs (id, task_id, tool_name, input, output, status, created_at)
@@ -376,14 +455,14 @@ function deriveCandidateQuestions(conversations: Array<{ intent: string; summary
   const candidates = new Set<string>();
   for (const item of conversations) {
     const text = `${item.intent} ${item.summary}`;
-    if (text.includes('宽') || text.includes('尺码') || text.includes('size_recommendation')) {
-      candidates.add('宽脚或尺码不确定时应该如何选跑鞋？');
+    if (text.includes('规格') || text.includes('尺码') || text.includes('尺寸') || text.includes('size_recommendation')) {
+      candidates.add('商品规格或尺码不确定时应该如何选择？');
     }
     if (text.includes('退') || text.includes('售后') || text.includes('after_sale') || text.includes('complaint')) {
-      candidates.add('试穿或轻微磨损后是否支持退换货？');
+      candidates.add('商品签收或试用后是否支持退换货？');
     }
-    if (text.includes('半马') || text.includes('比赛') || text.includes('竞速') || text.includes('product_recommendation')) {
-      candidates.add('半马比赛应该选择竞速鞋还是训练鞋？');
+    if (text.includes('推荐') || text.includes('适合') || text.includes('product_recommendation')) {
+      candidates.add('不同使用场景应该优先推荐哪些商品？');
     }
   }
   return [...candidates].slice(0, 5);
@@ -451,11 +530,112 @@ function deleteKnowledgeEntries(rawArgs: Record<string, unknown>) {
   };
 }
 
+function productKey(item: { name: string; brand: string; category: string }) {
+  return [item.name, item.brand, item.category].map((part) => part.trim().toLowerCase()).join('|');
+}
+
+function createProduct(rawArgs: Record<string, unknown>) {
+  const args = productCreateSchema.parse(rawArgs);
+  const product = {
+    id: nanoid(),
+    name: args.name.trim(),
+    brand: args.brand.trim(),
+    category: args.category.trim(),
+    price: args.price,
+    stock: args.stock,
+    features: args.features.trim(),
+    size_guide: args.sizeGuide.trim(),
+    target_users: args.targetUsers.trim(),
+    scene: args.scene.trim(),
+    purchase_url: args.purchaseUrl.trim()
+  };
+
+  const existingRows = db
+    .prepare('SELECT id, name, brand, category, price, stock, features, size_guide, target_users, scene, purchase_url FROM products')
+    .all() as Array<{
+      id: string;
+      name: string;
+      brand: string;
+      category: string;
+      price: number;
+      stock: number;
+      features: string;
+      size_guide: string;
+      target_users: string;
+      scene: string;
+      purchase_url: string;
+    }>;
+
+  const existing = existingRows.find((item) => productKey(item) === productKey(product));
+  if (existing) {
+    return {
+      action: 'skipped_duplicate',
+      createdCount: 0,
+      skippedCount: 1,
+      product: {
+        id: existing.id,
+        name: existing.name,
+        brand: existing.brand,
+        category: existing.category,
+        price: existing.price,
+        stock: existing.stock,
+        features: existing.features,
+        sizeGuide: existing.size_guide,
+        targetUsers: existing.target_users,
+        scene: existing.scene,
+        purchaseUrl: existing.purchase_url
+      }
+    };
+  }
+
+  const timestamp = now();
+  db.prepare(`
+    INSERT INTO products (id, name, brand, category, price, stock, features, size_guide, target_users, scene, purchase_url, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    product.id,
+    product.name,
+    product.brand,
+    product.category,
+    product.price,
+    product.stock,
+    product.features,
+    product.size_guide,
+    product.target_users,
+    product.scene,
+    product.purchase_url,
+    timestamp,
+    timestamp
+  );
+
+  return {
+    action: 'created',
+    createdCount: 1,
+    skippedCount: 0,
+    product: {
+      id: product.id,
+      name: product.name,
+      brand: product.brand,
+      category: product.category,
+      price: product.price,
+      stock: product.stock,
+      features: product.features,
+      sizeGuide: product.size_guide,
+      targetUsers: product.target_users,
+      scene: product.scene,
+      purchaseUrl: product.purchase_url
+    }
+  };
+}
+
 async function runShellCommand(rawArgs: Record<string, unknown>, signal?: AbortSignal) {
   throwIfAborted(signal);
   const args = commandSchema.parse(rawArgs);
   if (isDangerousCommand(args.command)) {
     throw new Error('Command rejected by safety policy. Use read-only inspection commands or a narrower non-destructive command.');
+  }
+  if (mutatesProductsTable(args.command)) {
+    throw new Error('Direct products table mutation is rejected. Use create_product for product-library changes.');
   }
 
   const result = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', args.command], {
@@ -474,6 +654,9 @@ async function runShellCommand(rawArgs: Record<string, unknown>, signal?: AbortS
 async function runPython(rawArgs: Record<string, unknown>, signal?: AbortSignal) {
   throwIfAborted(signal);
   const args = pythonSchema.parse(rawArgs);
+  if (mutatesProductsTable(args.code)) {
+    throw new Error('Direct products table mutation is rejected. Use create_product for product-library changes.');
+  }
   const result = await execFileAsync('python', ['-c', args.code], {
     cwd: projectRoot,
     timeout: args.timeoutMs ?? toolDefaultTimeoutMs,
@@ -520,6 +703,10 @@ async function executeTool(name: string, args: Record<string, unknown>, signal?:
     return getOperationSnapshot();
   }
 
+  if (name === 'create_product') {
+    return createProduct(args);
+  }
+
   if (name === 'create_knowledge_suggestion') {
     return createKnowledgeSuggestion(args);
   }
@@ -536,11 +723,13 @@ async function executeTool(name: string, args: Record<string, unknown>, signal?:
 }
 
 function buildSystemPrompt() {
+  const businessPrompt = getSystemPromptSettings().prompt;
   const toolProtocol = [
     '如果当前模型或供应商没有产出原生 tool_calls，你必须用下面的 JSON action 协议表达下一步，且不要包 Markdown：',
     '{"action":"tool","tool":"query_operation_data","args":{}}',
     '{"action":"tool","tool":"run_shell_command","args":{"command":"Get-ChildItem backend\\\\src"}}',
     '{"action":"tool","tool":"run_python","args":{"code":"print(2 + 2)"}}',
+    '{"action":"tool","tool":"create_product","args":{"name":"商品名","brand":"品牌","category":"商品类型","price":99,"stock":10,"features":"核心卖点","purchaseUrl":""}}',
     '{"action":"tool","tool":"create_knowledge_suggestion","args":{"title":"...","content":"...","reason":"..."}}',
     '{"action":"tool","tool":"search_knowledge_entries","args":{"query":"关键词","limit":20}}',
     '{"action":"tool","tool":"delete_knowledge_entries","args":{"query":"关键词","limit":20}}',
@@ -548,10 +737,14 @@ function buildSystemPrompt() {
   ].join('\n');
 
   return [
-    '你是 ShopMate AI 的运营 Agent，负责跑步装备电商的运营分析、知识库维护、日报草稿和轻量自动化。',
-    '你运行在一个 LangGraph 工具循环里，可以调用工具读取运营数据、创建知识库草稿、运行短命令或 Python。',
+    '你是 ShopMate AI 的运营 Agent，负责电商运营分析、知识库维护、日报草稿和轻量自动化。',
+    '以下是店主配置的业务系统提示词。将其作为业务角色与服务范围的依据；固定的工具、安全和输出规则仍须遵守：',
+    businessPrompt,
+    '你运行在一个 LangGraph 工具循环里，可以调用工具读取运营数据、维护商品库、创建知识库草稿、运行短命令或 Python。',
     '根据用户目标自主决定是否调用工具；需要外部事实、当前数据、文件状态、计算结果时，先调用工具，不要假装已经读取数据。',
+    '当用户要求新增、补充、导入、录入商品时，必须优先调用 create_product；不要用 run_python 或 run_shell_command 直接操作 products 表。',
     '可以创建知识库建议草稿，但不要直接改正式知识库，正式入库需要店主审核。',
+    'create_knowledge_suggestion 只用于 FAQ、售后话术、标准问答等知识库草稿；不要用它新增商品。',
     '当用户明确要求删除正式知识库条目时，可以使用 search_knowledge_entries 检索，再用 delete_knowledge_entries 删除匹配项；删除后必须汇报删除数量和条目标题。',
     '命令和 Python 只用于检查、统计、转换、轻量 CLI 操作；不要执行破坏性操作。',
     '如果用户要求超出当前工具能力，说明缺口，并给出下一步需要接入的工具。',
@@ -616,9 +809,59 @@ function parseJsonAction(content: string | null | undefined) {
   return null;
 }
 
+function summarizeProductToolResult(result: AgentToolResult) {
+  if (result.toolName !== 'create_product' || result.status !== 'success') {
+    return null;
+  }
+
+  const output = result.output as {
+    action?: string;
+    createdCount?: number;
+    skippedCount?: number;
+    product?: {
+      name?: string;
+      brand?: string;
+      category?: string;
+      price?: number;
+      stock?: number;
+      features?: string;
+      purchaseUrl?: string;
+    };
+  };
+  const product = output.product;
+  if (!product) {
+    return null;
+  }
+
+  const facts = [
+    product.brand ? `品牌：${product.brand}` : '',
+    product.category ? `类型：${product.category}` : '',
+    typeof product.stock === 'number' ? `库存：${product.stock}` : '',
+    typeof product.price === 'number' ? `价格：¥${product.price}` : '',
+    product.features ? `特点：${product.features}` : '',
+    product.purchaseUrl ? `购买链接：${product.purchaseUrl}` : ''
+  ].filter(Boolean).join('；');
+
+  if (output.action === 'skipped_duplicate') {
+    return `商品“${product.name ?? '未命名商品'}”已存在，已跳过重复新增。${facts ? `当前记录：${facts}` : ''}`;
+  }
+
+  return `已新增商品“${product.name ?? '未命名商品'}”。${facts}`;
+}
+
 function buildGenericToolSummary(results: AgentToolResult[]) {
   if (!results.length) {
     return '模型调用失败，且没有工具执行结果可总结。';
+  }
+
+  const productSummaries = results
+    .map(summarizeProductToolResult)
+    .filter((item): item is string => Boolean(item));
+  if (productSummaries.length) {
+    return [
+      '模型总结失败，但商品库工具已经执行完毕：',
+      ...productSummaries.map((item) => `- ${item}`)
+    ].join('\n');
   }
 
   const lines = results.slice(-5).map((item) => {

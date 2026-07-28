@@ -12,7 +12,7 @@ const now = () => new Date().toISOString();
 
 function buildAnswer(input: string, intent: Intent, emotion: Emotion, matches: KnowledgeChunk[], confidence: number) {
   if (matches.length === 0 || confidence < 0.34) {
-    return '按一般跑步装备选择思路，我可以先给你一个参考：如果是日常慢跑，优先看缓震、稳定和尺码舒适度；如果是比赛或速度训练，再考虑更轻、更弹的竞速款。你也可以补充预算、跑步距离、脚型和当前配速，我再帮你缩小选择。';
+    return '我可以先按一般电商选购思路给你参考。请补充商品用途、预算、偏好的规格或款式，以及最在意的因素，我再结合店铺资料帮你缩小选择范围。';
   }
 
   const facts = matches.slice(0, 3).map((item) => item.content);
@@ -26,11 +26,11 @@ function buildAnswer(input: string, intent: Intent, emotion: Emotion, matches: K
   }
 
   if (intent === 'size_recommendation') {
-    return `${facts.join(' ')} 结合你的描述，尺码选择应优先保证前掌不挤压，并为长距离跑预留脚趾活动空间。`;
+    return `${facts.join(' ')} 结合你的描述，建议优先确认商品规格表、使用场景和舒适度；不确定时可先补充你的常用规格和具体需求。`;
   }
 
   if (intent === 'product_recommendation') {
-    return `${facts.join(' ')} 如果你更重视比赛速度，可以优先看竞速鞋；如果日常训练或膝盖敏感，更建议选择缓震训练鞋。`;
+    return `${facts.join(' ')} 你可以结合使用场景、预算、核心偏好和库存情况选择；把这些信息补充给我后，我可以继续帮你比较。`;
   }
 
   if (emotion === 'negative') {

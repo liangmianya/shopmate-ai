@@ -5,88 +5,92 @@ const now = () => new Date().toISOString();
 
 const products = [
   {
-    id: 'p-shoe-race-pro',
-    name: '疾风 Pro 碳板竞速跑鞋',
-    brand: 'RunPeak',
-    category: '竞速跑鞋',
-    price: 899,
-    stock: 42,
-    features: '全掌碳板、轻量 PEBA 中底、前掌滚动推进，适合半马和全马比赛。',
-    sizeGuide: '竞速鞋楦型偏窄，脚宽或脚背高建议比日常运动鞋大半码；长距离比赛建议预留 0.5 到 1 厘米脚趾空间。',
-    targetUsers: '有一定跑步基础、配速 3:50 到 5:30 的跑者。',
-    scene: '半马、全马、间歇训练、竞速日'
+    id: 'p-skincare-eye-cream',
+    name: '多效修护眼霜',
+    brand: 'VitaSkin',
+    category: '眼部护理',
+    price: 199,
+    stock: 86,
+    features: '淡化黑眼圈、改善干纹，质地轻薄，适合早晚护理。',
+    sizeGuide: '建议每次取米粒大小，沿眼周轻点按压，不要靠近眼球。',
+    targetUsers: '眼周干燥、熬夜后暗沉或初期细纹用户。',
+    scene: '日常护肤、妆前护理、夜间修护',
+    purchaseUrl: 'https://example.com/products/eye-cream'
   },
   {
-    id: 'p-shoe-daily-cloud',
-    name: '云缓震 Daily Trainer 慢跑鞋',
-    brand: 'RunPeak',
-    category: '缓震慢跑鞋',
-    price: 529,
-    stock: 88,
-    features: '厚底缓震、后跟稳定片、耐磨橡胶外底，适合日常慢跑和恢复跑。',
-    sizeGuide: '尺码标准，正常脚型按日常运动鞋尺码购买；脚宽建议选择大半码。',
-    targetUsers: '新手跑者、大体重跑者、膝盖敏感或需要高缓震保护的跑者。',
-    scene: '日常慢跑、恢复跑、通勤健走'
+    id: 'p-skincare-cleanser',
+    name: '净润氨基酸洁面',
+    brand: 'VitaSkin',
+    category: '洁面乳',
+    price: 79,
+    stock: 241,
+    features: '温和控油、弱酸配方，泡沫细腻，早晚可用。',
+    sizeGuide: '每次取黄豆大小，加水揉搓起泡后轻柔清洁。',
+    targetUsers: '油皮、混合皮和追求温和清洁的用户。',
+    scene: '晨间洁面、晚间清洁、通勤护肤',
+    purchaseUrl: 'https://example.com/products/cleanser'
   },
   {
-    id: 'p-shoe-trail-grip',
-    name: '山野 TrailGrip 越野跑鞋',
-    brand: 'RunPeak',
-    category: '越野跑鞋',
-    price: 699,
-    stock: 31,
-    features: '5mm 齿深大底、防撞鞋头、包裹鞋面，适合山路和湿滑路面。',
-    sizeGuide: '越野下坡脚趾前冲明显，建议预留 0.8 到 1 厘米空间。',
-    targetUsers: '越野跑、山地徒步和复杂路面训练用户。',
-    scene: '越野跑、山路训练、轻徒步'
+    id: 'p-beauty-brow-pencil',
+    name: '定型防水眉笔',
+    brand: 'RosyDream',
+    category: '眉部彩妆',
+    price: 69,
+    stock: 266,
+    features: '不易晕染、双头设计，新手友好。',
+    sizeGuide: '根据发色选择相近色号，少量多次描画更自然。',
+    targetUsers: '日常通勤妆、初学化妆和需要持久妆效的用户。',
+    scene: '日常妆容、通勤、出游',
+    purchaseUrl: 'https://example.com/products/brow-pencil'
   },
   {
-    id: 'p-apparel-compression',
-    name: 'PowerRun 压缩裤',
-    brand: 'RunPeak',
-    category: '跑步服饰',
-    price: 239,
-    stock: 120,
-    features: '渐进式压力、侧边口袋、速干面料，适合长距离训练。',
-    sizeGuide: '贴身衣物按身高体重和腿围综合推荐；介于两个尺码之间建议选大一码。',
-    targetUsers: '长距离训练、马拉松备赛、需要肌肉支撑的跑者。',
-    scene: '长距离慢跑、马拉松训练、健身'
+    id: 'p-beauty-cushion',
+    name: '柔雾哑光粉底液',
+    brand: 'RosyDream',
+    category: '底妆',
+    price: 129,
+    stock: 152,
+    features: '柔焦遮瑕、持妆不拔干，适合日常通勤。',
+    sizeGuide: '建议根据肤色深浅选择色号；干皮可先做好保湿打底。',
+    targetUsers: '需要自然遮瑕和持久妆效的用户。',
+    scene: '通勤妆、约会妆、轻正式场合',
+    purchaseUrl: 'https://example.com/products/foundation'
   }
 ];
 
 const knowledge = [
   {
     type: 'size',
-    title: '宽脚用户如何选择竞速跑鞋',
-    content: '竞速跑鞋通常楦型偏窄。宽脚、脚背高或拇外翻用户，建议优先选择宽楦款；如果目标款没有宽楦，通常建议比日常运动鞋大半码，并确认前掌没有明显挤压。',
-    tags: ['尺码', '宽脚', '竞速鞋'],
+    title: '如何选择商品规格或色号',
+    content: '客户不确定规格、尺寸或色号时，先确认使用场景、常用规格、肤色或偏好，再结合商品详情和库存给出建议；信息不足时应先追问。',
+    tags: ['规格', '色号', '选购'],
     source: 'size-guide'
   },
   {
     type: 'size',
-    title: '长距离跑鞋尺码预留规则',
-    content: '半马和全马比赛中脚会轻微肿胀，建议脚趾前方预留 0.5 到 1 厘米空间。下坡或越野场景建议预留更多空间，避免顶脚。',
-    tags: ['尺码', '半马', '全马'],
+    title: '敏感人群购买前注意事项',
+    content: '敏感肌、孕期、儿童或有特殊护理需求的客户，建议先查看成分、适用说明和禁忌信息；必要时建议先局部试用或咨询专业人士。',
+    tags: ['敏感肌', '适用人群', '注意事项'],
     source: 'size-guide'
   },
   {
     type: 'faq',
-    title: '碳板跑鞋适合新手吗',
-    content: '碳板跑鞋更适合有一定跑步基础、能稳定控制步态的跑者。新手如果主要用于日常慢跑，优先选择缓震训练鞋；如果只用于比赛，可以在试穿舒适的前提下选择。',
-    tags: ['碳板', '新手', '竞速'],
+    title: '如何根据预算推荐商品',
+    content: '推荐商品时先确认预算、用途、偏好和最在意的因素。只推荐商品库中真实存在的商品，不编造价格、库存或活动。',
+    tags: ['推荐', '预算', '选购'],
     source: 'faq'
   },
   {
     type: 'faq',
-    title: '慢跑鞋和竞速鞋有什么区别',
-    content: '慢跑鞋重视缓震、稳定和耐用，适合日常训练；竞速鞋重视轻量、回弹和推进感，适合比赛或高强度训练。多数跑者可以用慢跑鞋训练，用竞速鞋比赛。',
-    tags: ['慢跑鞋', '竞速鞋'],
+    title: '购买链接如何提供',
+    content: '当客户询问购买入口时，优先使用商品库中的购买链接。若商品没有配置链接，应说明暂未配置，并建议客户提供想看的具体商品。',
+    tags: ['购买链接', '下单', '商品'],
     source: 'faq'
   },
   {
     type: 'after_sale',
     title: '7 天无理由退货规则',
-    content: '签收后 7 天内，商品未使用、包装吊牌完整、不影响二次销售，可申请无理由退货。跑鞋鞋底有明显户外磨损、服饰吊牌拆除或贴身衣物已清洗，通常不支持无理由退货。',
+    content: '签收后 7 天内，商品未使用、包装吊牌完整、不影响二次销售，可申请无理由退货。已明显使用、包装缺失、贴身或特殊类目商品，需按店铺规则核实是否支持退货。',
     tags: ['退货', '售后', '7天无理由'],
     source: 'after-sale-policy'
   },
@@ -99,24 +103,24 @@ const knowledge = [
   },
   {
     type: 'product',
-    title: '疾风 Pro 碳板竞速跑鞋资料',
-    content: '疾风 Pro 碳板竞速跑鞋采用全掌碳板和轻量 PEBA 中底，适合半马、全马和高强度训练。楦型偏窄，宽脚建议大半码。',
-    tags: ['疾风 Pro', '碳板', '半马'],
-    source: 'product:p-shoe-race-pro'
+    title: '多效修护眼霜资料',
+    content: '多效修护眼霜主打淡化黑眼圈和改善干纹，质地轻薄，适合早晚护理。购买链接：https://example.com/products/eye-cream',
+    tags: ['多效修护眼霜', '眼部护理', 'VitaSkin'],
+    source: 'product:p-skincare-eye-cream'
   },
   {
     type: 'product',
-    title: '云缓震 Daily Trainer 慢跑鞋资料',
-    content: '云缓震 Daily Trainer 慢跑鞋主打厚底缓震和稳定保护，适合新手、大体重跑者、膝盖敏感用户和日常恢复跑。',
-    tags: ['云缓震', '慢跑鞋', '缓震'],
-    source: 'product:p-shoe-daily-cloud'
+    title: '净润氨基酸洁面资料',
+    content: '净润氨基酸洁面采用弱酸配方，温和控油，适合晨间和晚间清洁。购买链接：https://example.com/products/cleanser',
+    tags: ['净润氨基酸洁面', '洁面乳', 'VitaSkin'],
+    source: 'product:p-skincare-cleanser'
   },
   {
     type: 'product',
-    title: 'PowerRun 压缩裤资料',
-    content: 'PowerRun 压缩裤使用渐进式压力和速干面料，适合长距离训练和马拉松备赛。贴身衣物尺码需结合身高体重和腿围。',
-    tags: ['压缩裤', '长距离', '服饰'],
-    source: 'product:p-apparel-compression'
+    title: '定型防水眉笔资料',
+    content: '定型防水眉笔不易晕染，双头设计，新手友好。购买链接：https://example.com/products/brow-pencil',
+    tags: ['定型防水眉笔', '眉部彩妆', 'RosyDream'],
+    source: 'product:p-beauty-brow-pencil'
   }
 ];
 
@@ -125,8 +129,8 @@ function seed() {
   resetData();
 
   const insertProduct = db.prepare(`
-    INSERT INTO products (id, name, brand, category, price, stock, features, size_guide, target_users, scene, created_at, updated_at)
-    VALUES (@id, @name, @brand, @category, @price, @stock, @features, @sizeGuide, @targetUsers, @scene, @createdAt, @updatedAt)
+    INSERT INTO products (id, name, brand, category, price, stock, features, size_guide, target_users, scene, purchase_url, created_at, updated_at)
+    VALUES (@id, @name, @brand, @category, @price, @stock, @features, @sizeGuide, @targetUsers, @scene, @purchaseUrl, @createdAt, @updatedAt)
   `);
 
   const insertKnowledge = db.prepare(`

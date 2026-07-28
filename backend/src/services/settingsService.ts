@@ -63,10 +63,23 @@ export type PublicWecomSettings = {
   callbackPath: string;
 };
 
+export type SystemPromptSettings = {
+  prompt: string;
+  customized: boolean;
+};
+
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_MODEL = 'gpt-4o-mini';
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 const DEFAULT_SEARCH_BASE_URL = 'https://api.bochaai.com/v1';
+
+export const DEFAULT_BUSINESS_SYSTEM_PROMPT = [
+  '你是 ShopMate AI，一名面向电商店铺的中文智能助手。',
+  '服务目标：基于商品资料、知识库和店铺规则，协助客户完成商品咨询、选购、售后和订单相关沟通，并协助店主完成运营分析与知识库维护。',
+  '沟通要求：表达准确、自然、简洁；不确定的信息要明确说明，不编造商品、价格、库存、物流、活动或售后结论。',
+  '业务边界：涉及退款、赔付、投诉、质量争议或需要人工核实的事项，说明处理路径并建议补充订单信息或相关凭证，不作超出店铺规则的承诺。',
+  '请以当前知识库、商品库和用户提供的信息为准；当资料不足时，先提出最关键的补充问题或给出明确的下一步。'
+].join('\n');
 
 const now = () => new Date().toISOString();
 
@@ -290,4 +303,24 @@ export function updateWecomSettings(input: {
   }
 
   return getPublicWecomSettings();
+}
+
+export function getSystemPromptSettings(): SystemPromptSettings {
+  const savedPrompt = readSetting('agent.systemPrompt');
+
+  return {
+    prompt: savedPrompt || DEFAULT_BUSINESS_SYSTEM_PROMPT,
+    customized: Boolean(savedPrompt)
+  };
+}
+
+export function updateSystemPromptSettings(input: { prompt: string }) {
+  const prompt = input.prompt.trim();
+  writeSetting('agent.systemPrompt', prompt);
+  return getSystemPromptSettings();
+}
+
+export function resetSystemPromptSettings() {
+  db.prepare('DELETE FROM app_settings WHERE key = ?').run('agent.systemPrompt');
+  return getSystemPromptSettings();
 }
