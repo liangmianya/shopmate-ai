@@ -334,50 +334,98 @@ h2 {
   display: flex;
   max-width: 920px;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
-.agentPlan,
-.agentSuggestionsInline,
-.agentToolGrid > div {
+.agentExecution,
+.agentReferences,
+.agentAnswerBubble {
   border: 1px solid #e3e3df;
   border-radius: 8px;
-  background: #fafafa;
+  background: #ffffff;
 }
 
-.agentPlan,
-.agentSuggestionsInline {
+.agentAnswerBubble {
+  max-width: 820px;
   padding: 12px;
 }
 
-.agentBlockTitle,
+.agentExecution {
+  max-width: 860px;
+  overflow: hidden;
+  background: #fafafa;
+}
+
+.agentExecutionToggle {
+  width: 100%;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  background: transparent;
+  color: #202020;
+  cursor: pointer;
+  padding: 9px 11px;
+  text-align: left;
+}
+
+.agentExecutionToggle > span,
+.agentExecutionToggle small,
+.agentReferencesTitle,
 .sideTitle {
   display: flex;
   align-items: center;
   gap: 7px;
-  margin-bottom: 10px;
   color: #202020;
 }
 
-.agentBlockTitle strong,
+.agentExecutionToggle strong,
+.agentReferencesTitle strong,
 .sideTitle strong {
   font-size: 13px;
   font-weight: 650;
 }
 
-.agentTraceRow {
+.agentExecutionToggle small {
+  flex-shrink: 0;
+  color: #747474;
+  font-size: 12px;
+}
+
+.agentExecutionToggle svg:first-child {
+  transition: transform 0.15s ease;
+}
+
+.agentExecutionToggle svg:first-child.open {
+  transform: rotate(90deg);
+}
+
+.agentExecutionBody {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  gap: 8px;
-  padding: 8px 0;
+  gap: 10px;
+  padding: 0 11px 11px;
+}
+
+.agentExecutionTimeline {
+  display: grid;
   border-top: 1px solid #ecece9;
 }
 
-.agentTraceRow:first-of-type {
-  border-top: 0;
+.agentExecutionItem {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid #ecece9;
 }
 
-.agentTraceRow > span {
+.agentExecutionItem:last-child {
+  border-bottom: 0;
+}
+
+.agentExecutionMarker {
   width: 20px;
   height: 20px;
   display: grid;
@@ -387,14 +435,48 @@ h2 {
   color: #ffffff;
 }
 
-.agentTraceRow strong {
-  display: block;
-  margin-bottom: 2px;
-  font-size: 13px;
+.agentExecutionItem.error .agentExecutionMarker,
+.agentExecutionItem.blocked .agentExecutionMarker {
+  background: #b42318;
 }
 
-.agentTraceRow p,
-.agentSuggestionsInline p,
+.agentExecutionContent {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.agentExecutionItemHeader {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.agentExecutionItemHeader span {
+  color: #111111;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.agentExecutionItemHeader strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.agentExecutionItemHeader em {
+  margin-left: auto;
+  color: #717171;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.agentExecutionItem p {
+  margin: 0;
+}
+
+.agentExecutionItem p,
+.agentReferenceList p,
 .retrievalItem p,
 .suggestion p,
 .manualBox pre {
@@ -403,42 +485,97 @@ h2 {
   line-height: 1.55;
 }
 
-.agentToolGrid {
+.agentToolPayload {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: 7px;
 }
 
-.agentToolGrid > div {
-  display: flex;
-  min-height: 84px;
-  flex-direction: column;
-  justify-content: center;
-  gap: 5px;
-  padding: 10px;
+.agentToolPayload details {
+  border: 1px solid #ecece9;
+  border-radius: 7px;
+  background: #ffffff;
 }
 
-.agentToolGrid span {
+.agentToolPayload summary {
+  cursor: pointer;
+  color: #717171;
+  font-size: 12px;
+  padding: 7px 8px;
+}
+
+.agentToolPayload > div > span {
+  display: block;
+  margin-bottom: 5px;
   color: #717171;
   font-size: 12px;
 }
 
-.agentToolGrid strong {
-  font-size: 15px;
-  font-weight: 650;
+.agentToolPayload pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid #ecece9;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #424242;
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px;
+  white-space: pre-wrap;
 }
 
-.agentSuggestionsInline article {
-  padding: 10px 0;
+.agentToolPayload details pre {
+  border: 0;
+  border-top: 1px solid #ecece9;
+  border-radius: 0 0 7px 7px;
+}
+
+.agentExecutionEmpty {
+  margin: 0;
+  border-top: 1px solid #ecece9;
+  color: #747474;
+  font-size: 13px;
+  padding-top: 10px;
+}
+
+.agentReferences {
+  max-width: 820px;
+  padding: 10px 12px;
+  background: #fafafa;
+}
+
+.agentReferencesTitle {
+  margin-bottom: 8px;
+}
+
+.agentReferenceList {
+  display: grid;
+  gap: 8px;
+}
+
+.agentReferenceList article {
+  padding-top: 8px;
   border-top: 1px solid #ecece9;
 }
 
-.agentSuggestionsInline article:first-of-type {
+.agentReferenceList article:first-child {
+  padding-top: 0;
   border-top: 0;
 }
 
-.agentSuggestionsInline article > strong {
+.agentReferenceList span,
+.agentReferenceList strong {
   display: block;
+}
+
+.agentReferenceList span {
+  margin-bottom: 3px;
+  color: #747474;
+  font-size: 12px;
+}
+
+.agentReferenceList strong {
   margin-bottom: 4px;
   font-size: 13px;
 }
@@ -551,7 +688,7 @@ input:focus,
 .composerFooter {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
   padding: 8px;
   border-top: 1px solid #eeeeeb;
@@ -596,6 +733,72 @@ input:focus,
 .primaryButton:hover,
 .smallButton:hover {
   background: #2a2a2a;
+}
+
+.primaryButton.danger {
+  background: #b42318;
+}
+
+.primaryButton.danger:hover:not(:disabled) {
+  background: #912018;
+}
+
+.agentConfirmationCard {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  border: 1px solid #f1b8b0;
+  border-radius: 8px;
+  background: #fff8f6;
+  padding: 12px;
+}
+
+.agentConfirmationCard > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #912018;
+}
+
+.agentConfirmationCard p {
+  margin: 0;
+  color: #4d2b27;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.agentConfirmationCard small {
+  color: #7a4a44;
+}
+
+.confirmationPreview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.confirmationPreview span {
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #5f2b25;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.confirmationActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.confirmationActions .ghostButton {
+  width: auto;
+  padding: 0 12px;
 }
 
 .agentSide {
@@ -895,6 +1098,59 @@ input:focus,
 
 .markdownMessage strong {
   font-weight: 700;
+}
+
+.markdownTableWrap {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid #e3e3df;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.markdownMessage table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.markdownMessage th,
+.markdownMessage td {
+  border-bottom: 1px solid #ecece9;
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.markdownMessage th {
+  background: #f6f6f3;
+  color: #202020;
+  font-weight: 700;
+}
+
+.markdownMessage tbody tr:nth-child(even) {
+  background: #fbfbfa;
+}
+
+.markdownMessage tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.message.user .markdownTableWrap {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.message.user .markdownMessage th {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+}
+
+.message.user .markdownMessage td {
+  border-bottom-color: rgba(255, 255, 255, 0.18);
 }
 
 .mathFormula {
@@ -1785,7 +2041,7 @@ input:focus,
 .primaryButton,
 .smallButton,
 .evidenceMeta span,
-.agentTraceRow > span {
+.agentExecutionMarker {
   background: var(--accent);
 }
 
@@ -1846,9 +2102,10 @@ input:focus {
   box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.075);
 }
 
-.agentPlan,
-.agentSuggestionsInline,
-.agentToolGrid > div,
+.agentExecution,
+.agentReferences,
+.agentAnswerBubble,
+.agentToolPayload pre,
 .inspectorSection,
 .manualBox,
 .stat,
@@ -1914,8 +2171,8 @@ input:focus {
 
 .evidenceItem p,
 .markdownMessage p,
-.agentTraceRow p,
-.agentSuggestionsInline p {
+.agentExecutionItem p,
+.agentReferenceList p {
   color: #4f4f4a;
 }
 
@@ -1985,7 +2242,7 @@ input:focus {
   }
 
   .headerStats,
-  .agentToolGrid,
+  .agentExecutionTimeline,
   .agentSide,
   .placeholderStats,
   .loop,
@@ -2092,9 +2349,10 @@ input:focus {
   border-top: 1px solid rgba(17, 17, 17, 0.08);
 }
 
-.agentPlan,
-.agentSuggestionsInline,
-.agentToolGrid > div,
+.agentExecution,
+.agentReferences,
+.agentAnswerBubble,
+.agentToolPayload pre,
 .inspectorSection,
 .manualBox,
 .stat,

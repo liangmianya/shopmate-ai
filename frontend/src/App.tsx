@@ -9,7 +9,6 @@ import {
   ClipboardCheck,
   Database,
   FileText,
-  Gauge,
   KeyRound,
   Layers,
   Link,
@@ -21,13 +20,26 @@ import {
   Search,
   Send,
   Settings2,
-  Sparkles,
   Trash2,
   Wrench,
   X
 } from 'lucide-react';
 import {
+  Books,
+  CaretRight,
+  ChartDonut,
+  ChatsCircle,
+  FileText as PhosphorFileText,
+  GearSix,
+  Robot,
+  ShareNetwork
+} from '@phosphor-icons/react';
+import type {
+  Icon as PhosphorIcon
+} from '@phosphor-icons/react';
+import {
   AgentResponse,
+  AgentToolResult,
   ChatResponse,
   ChatMessage,
   EmbeddingSettings,
@@ -39,6 +51,7 @@ import {
   SystemPromptSettings,
   WecomSettings,
   approveSuggestion,
+  confirmAgentTool,
   createKnowledge,
   createProducts,
   deleteKnowledge,
@@ -97,49 +110,49 @@ const tabs: Array<{
   id: WorkspaceTab;
   label: string;
   description: string;
-  icon: typeof Bot;
+  icon: PhosphorIcon;
 }> = [
   {
     id: 'agent',
     label: '运营 Agent',
     description: '对话式任务执行',
-    icon: Bot
+    icon: Robot
   },
   {
     id: 'customer',
     label: '智能客服',
     description: 'RAG 客户接待',
-    icon: MessagesSquare
+    icon: ChatsCircle
   },
   {
     id: 'knowledge',
     label: '知识库',
     description: 'FAQ 审核入库',
-    icon: Database
+    icon: Books
   },
   {
     id: 'settings',
     label: '系统设置',
     description: '提示词与模型配置',
-    icon: KeyRound
+    icon: GearSix
   },
   {
     id: 'channels',
     label: '渠道接入',
     description: '企业微信客服',
-    icon: Link
+    icon: ShareNetwork
   },
   {
     id: 'analysis',
     label: '对话分析',
     description: '高频问题洞察',
-    icon: Gauge
+    icon: ChartDonut
   },
   {
     id: 'reports',
     label: '运营报表',
     description: '日报和指标',
-    icon: FileText
+    icon: PhosphorFileText
   }
 ];
 
@@ -149,16 +162,18 @@ const demoQuestions = [
   '这个商品有购买链接吗？'
 ];
 
-const agentExamples = [
-  '分析今天的客服对话，总结高频问题，并给我知识库补充建议。',
-  '检查最近转人工的问题，告诉我哪些知识库内容需要补。',
-  '把今天的客服情况整理成一份运营日报。'
-];
-
 const formatPercent = (value: number) => `${Math.round(value * 100)}%`;
 
 function cx(...items: Array<string | false | undefined>) {
   return items.filter(Boolean).join(' ');
+}
+
+function createClientId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: 'warn' | 'good' }) {
@@ -228,12 +243,43 @@ function renderInlineMarkdown(text: string) {
   return nodes;
 }
 
+function parseMarkdownTableRow(line: string) {
+  const trimmed = line.trim();
+  const normalized = trimmed.startsWith('|') && trimmed.endsWith('|')
+    ? trimmed.slice(1, -1)
+    : trimmed;
+  return normalized.split('|').map((cell) => cell.trim());
+}
+
+function isMarkdownTableSeparator(line: string) {
+  const cells = parseMarkdownTableRow(line);
+  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function isMarkdownTableCandidate(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed.includes('|')) {
+    return false;
+  }
+  return parseMarkdownTableRow(trimmed).length >= 2;
+}
+
 function MarkdownMessage({ content }: { content: string }) {
   const lines = content.split('\n');
   const blocks: React.ReactNode[] = [];
   let listItems: string[] = [];
+  let tableLines: string[] = [];
   let mathLines: string[] = [];
   let inMathBlock = false;
+
+  const pushParagraph = (line: string, key: string | number) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      blocks.push(<br key={`br-${key}`} />);
+      return;
+    }
+    blocks.push(<p key={`p-${key}`}>{renderInlineMarkdown(trimmed)}</p>);
+  };
 
   const flushList = () => {
     if (!listItems.length) {
@@ -247,6 +293,43 @@ function MarkdownMessage({ content }: { content: string }) {
       </ul>
     );
     listItems = [];
+  };
+
+  const flushTable = () => {
+    if (!tableLines.length) {
+      return;
+    }
+
+    if (tableLines.length >= 2 && isMarkdownTableSeparator(tableLines[1])) {
+      const headers = parseMarkdownTableRow(tableLines[0]);
+      const rows = tableLines.slice(2).map(parseMarkdownTableRow);
+      blocks.push(
+        <div key={`table-${blocks.length}`} className="markdownTableWrap">
+          <table>
+            <thead>
+              <tr>
+                {headers.map((header, index) => (
+                  <th key={`${header}-${index}`}>{renderInlineMarkdown(header)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, rowIndex) => (
+                <tr key={`row-${rowIndex}`}>
+                  {headers.map((_, cellIndex) => (
+                    <td key={`cell-${rowIndex}-${cellIndex}`}>{renderInlineMarkdown(row[cellIndex] ?? '')}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    } else {
+      tableLines.forEach((line, index) => pushParagraph(line, `table-fallback-${blocks.length}-${index}`));
+    }
+
+    tableLines = [];
   };
 
   lines.forEach((line, index) => {
@@ -267,12 +350,14 @@ function MarkdownMessage({ content }: { content: string }) {
     }
 
     if (singleLineMath) {
+      flushTable();
       flushList();
       blocks.push(<MathFormula key={`math-${index}`} value={singleLineMath[1]} block />);
       return;
     }
 
     if (trimmed.startsWith('$$')) {
+      flushTable();
       flushList();
       const rest = trimmed.slice(2);
       if (rest) {
@@ -282,21 +367,24 @@ function MarkdownMessage({ content }: { content: string }) {
       return;
     }
 
+    if (isMarkdownTableCandidate(trimmed)) {
+      flushList();
+      tableLines.push(trimmed);
+      return;
+    }
+
+    flushTable();
+
     if (listMatch) {
       listItems.push(listMatch[1]);
       return;
     }
 
     flushList();
-
-    if (!trimmed) {
-      blocks.push(<br key={`br-${index}`} />);
-      return;
-    }
-
-    blocks.push(<p key={`${trimmed}-${index}`}>{renderInlineMarkdown(trimmed)}</p>);
+    pushParagraph(trimmed, index);
   });
 
+  flushTable();
   flushList();
 
   if (inMathBlock) {
@@ -312,17 +400,17 @@ function PageHeader({
   description,
   action
 }: {
-  eyebrow: string;
+  eyebrow?: string;
   title: string;
-  description: string;
+  description?: string;
   action?: React.ReactNode;
 }) {
   return (
     <header className="workspaceHeader">
       <div>
-        <p className="eyebrow">{eyebrow}</p>
+        {eyebrow && <p className="eyebrow">{eyebrow}</p>}
         <h1>{title}</h1>
-        <p className="pageDescription">{description}</p>
+        {description && <p className="pageDescription">{description}</p>}
       </div>
       {action}
     </header>
@@ -429,77 +517,370 @@ function EvidenceList({
   );
 }
 
-function AgentAssistantMessage({ result, content }: { result?: AgentResponse; content: string }) {
-  if (!result) {
-    return content ? <MarkdownMessage content={content} /> : <p className="typingDot">正在思考...</p>;
+function compactToolOutput(value: unknown, limit = 1200) {
+  if (value === undefined || value === null || value === '') {
+    return '无返回内容';
   }
 
+  const raw = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  return raw.length > limit ? `${raw.slice(0, limit)}\n...已截断 ${raw.length - limit} 字符` : raw;
+}
+
+type AgentKnowledgeReference = {
+  id: string;
+  title: string;
+  content: string;
+  source?: string;
+  type?: string;
+};
+
+function isKnowledgeReference(value: unknown): value is AgentKnowledgeReference {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const item = value as Partial<AgentKnowledgeReference>;
+  return typeof item.id === 'string' && typeof item.title === 'string' && typeof item.content === 'string';
+}
+
+function collectAgentKnowledgeReferences(result?: AgentResponse) {
+  const references = new Map<string, AgentKnowledgeReference>();
+
+  for (const tool of result?.toolResults ?? []) {
+    if (tool.toolName !== 'search_knowledge_entries' || tool.status !== 'success') {
+      continue;
+    }
+
+    const output = tool.output as unknown;
+    const candidates = Array.isArray(output)
+      ? output
+      : output && typeof output === 'object' && Array.isArray((output as { matches?: unknown[] }).matches)
+        ? (output as { matches: unknown[] }).matches
+        : [];
+
+    for (const item of candidates) {
+      if (isKnowledgeReference(item)) {
+        references.set(item.id, item);
+      }
+    }
+  }
+
+  return [...references.values()];
+}
+
+type AgentExecutionItem =
+  | {
+      kind: 'thought';
+      key: string;
+      title: string;
+      detail: string;
+      status: AgentResponse['trace'][number]['status'];
+    }
+  | {
+      kind: 'tool';
+      key: string;
+      title: string;
+      detail?: string;
+      tool: AgentToolResult;
+    };
+
+function isToolTraceStep(step: AgentResponse['trace'][number]) {
+  return step.label.includes('工具调用') || step.detail.includes('执行成功') || step.detail.includes('执行失败');
+}
+
+function isPlanningTraceStep(step: AgentResponse['trace'][number]) {
+  return step.label.includes('规划') || step.detail.includes('模型请求调用');
+}
+
+function formatThoughtTitle(step: AgentResponse['trace'][number]) {
+  if (isPlanningTraceStep(step)) {
+    return '思考 / 规划';
+  }
+  if (step.label.includes('总结')) {
+    return '总结';
+  }
+  if (step.label.includes('启动')) {
+    return '启动';
+  }
+  return step.label;
+}
+
+function findMatchingTool(
+  step: AgentResponse['trace'][number],
+  tools: AgentToolResult[],
+  consumed: Set<number>,
+  fallbackStart: number
+) {
+  const exactIndex = tools.findIndex((tool, index) => (
+    !consumed.has(index) && (step.detail.includes(tool.toolName) || step.label.includes(tool.toolName))
+  ));
+  if (exactIndex >= 0) {
+    return exactIndex;
+  }
+
+  for (let index = fallbackStart; index < tools.length; index += 1) {
+    if (!consumed.has(index)) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function buildAgentExecutionItems(result: AgentResponse): AgentExecutionItem[] {
+  const tools = result.toolResults ?? [];
+  const consumedTools = new Set<number>();
+  const items: AgentExecutionItem[] = [];
+  let nextToolIndex = 0;
+
+  result.trace.forEach((step, traceIndex) => {
+    if (isToolTraceStep(step)) {
+      const toolIndex = findMatchingTool(step, tools, consumedTools, nextToolIndex);
+      if (toolIndex >= 0) {
+        consumedTools.add(toolIndex);
+        nextToolIndex = toolIndex + 1;
+        const tool = tools[toolIndex];
+        items.push({
+          kind: 'tool',
+          key: `tool:${tool.id}:${traceIndex}`,
+          title: tool.toolName,
+          detail: step.detail,
+          tool
+        });
+        return;
+      }
+    }
+
+    items.push({
+      kind: 'thought',
+      key: `trace:${step.label}:${traceIndex}`,
+      title: formatThoughtTitle(step),
+      detail: step.detail,
+      status: step.status
+    });
+  });
+
+  tools.forEach((tool, toolIndex) => {
+    if (!consumedTools.has(toolIndex)) {
+      items.push({
+        kind: 'tool',
+        key: `tool:${tool.id}`,
+        title: tool.toolName,
+        tool
+      });
+    }
+  });
+
+  return items;
+}
+
+function AgentExecutionPanel({
+  result,
+  isRunning
+}: {
+  result: AgentResponse;
+  isRunning: boolean;
+}) {
+  const [open, setOpen] = useState(isRunning);
+  const wasRunningRef = useRef(isRunning);
   const toolResults = result.toolResults ?? [];
+  const executionItems = buildAgentExecutionItems(result);
+  const hasExecution = isRunning || result.trace.length > 0 || toolResults.length > 0;
+
+  useEffect(() => {
+    if (isRunning) {
+      setOpen(true);
+    }
+    if (wasRunningRef.current && !isRunning) {
+      setOpen(false);
+    }
+    wasRunningRef.current = isRunning;
+  }, [isRunning]);
+
+  if (!hasExecution) {
+    return null;
+  }
 
   return (
-    <div className="agentResponse">
-      {content ? <MarkdownMessage content={content} /> : <p className="typingDot">正在思考...</p>}
-
-      <div className="agentPlan">
-        <div className="agentBlockTitle">
+    <section className={cx('agentExecution', open && 'open')}>
+      <button className="agentExecutionToggle" type="button" onClick={() => setOpen((current) => !current)}>
+        <span>
+          <ChevronRight size={14} className={open ? 'open' : ''} />
           <Layers size={15} />
           <strong>执行链路</strong>
-        </div>
-        {result.trace.map((step, index) => (
-          <div key={`${step.label}-${index}`} className="agentTraceRow">
-            <span><Check size={13} /></span>
-            <div>
-              <strong>{step.label}</strong>
-              <p>{step.detail}</p>
-            </div>
-          </div>
-        ))}
-      </div>
+        </span>
+        <small>
+          {isRunning ? '运行中' : '已完成'} · {result.trace.length} 步 · {toolResults.length} 个工具
+        </small>
+      </button>
 
-      <div className="agentToolGrid">
-        {toolResults.length ? (
-          toolResults.slice(0, 6).map((tool) => (
-            <div key={tool.id}>
-              <Wrench size={15} />
-              <span>{tool.status === 'success' ? 'success' : 'error'}</span>
-              <strong>{tool.toolName}</strong>
+      {open && (
+        <div className="agentExecutionBody">
+          {executionItems.length > 0 ? (
+            <div className="agentExecutionTimeline">
+              {executionItems.map((item) => (
+                item.kind === 'tool' ? (
+                  <article key={item.key} className={cx('agentExecutionItem', 'tool', item.tool.status === 'error' && 'error')}>
+                    <span className="agentExecutionMarker"><Wrench size={13} /></span>
+                    <div className="agentExecutionContent">
+                      <div className="agentExecutionItemHeader">
+                        <span>行动 / 工具调用</span>
+                        <strong>{item.title}</strong>
+                        <em>{item.tool.status === 'success' ? '成功' : '失败'}</em>
+                      </div>
+                      {item.detail && <p>{item.detail}</p>}
+                      <div className="agentToolPayload">
+                        <details>
+                          <summary>调用参数</summary>
+                          <pre>{compactToolOutput(item.tool.input, 800)}</pre>
+                        </details>
+                        <div>
+                          <span>观察 / 返回结果</span>
+                          <pre>{compactToolOutput(item.tool.output)}</pre>
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                ) : (
+                  <article key={item.key} className={cx('agentExecutionItem', 'thought', item.status === 'blocked' && 'blocked')}>
+                    <span className="agentExecutionMarker">
+                      {item.status === 'blocked' ? <AlertTriangle size={13} /> : <Check size={13} />}
+                    </span>
+                    <div className="agentExecutionContent">
+                      <div className="agentExecutionItemHeader">
+                        <span>{item.title}</span>
+                      </div>
+                      <p>{item.detail}</p>
+                    </div>
+                  </article>
+                )
+              ))}
             </div>
-          ))
-        ) : (
-          <>
-            <div>
-              <Wrench size={15} />
-              <span>LangGraph</span>
-              <strong>未调用工具</strong>
-            </div>
-            <div>
-              <AlertTriangle size={15} />
-              <span>manualRequired</span>
-              <strong>{result.analysis.manualCount} 条</strong>
-            </div>
-            <div>
-              <ClipboardCheck size={15} />
-              <span>knowledgeDrafts</span>
-              <strong>{result.suggestions.length} 条建议</strong>
-            </div>
-          </>
-        )}
-      </div>
-
-      <div className="agentSuggestionsInline">
-        <div className="agentBlockTitle">
-          <Sparkles size={15} />
-          <strong>知识库补充草稿</strong>
+          ) : (
+            <p className="agentExecutionEmpty">等待 Agent 规划或工具返回...</p>
+          )}
         </div>
-        {result.suggestions.map((item) => (
+      )}
+    </section>
+  );
+}
+
+function AgentReferences({ references }: { references: AgentKnowledgeReference[] }) {
+  if (!references.length) {
+    return null;
+  }
+
+  return (
+    <section className="agentReferences">
+      <div className="agentReferencesTitle">
+        <Database size={14} />
+        <strong>知识库引用</strong>
+      </div>
+      <div className="agentReferenceList">
+        {references.slice(0, 6).map((item) => (
           <article key={item.id}>
+            <span>{item.type || '知识库'}{item.source ? ` · ${item.source}` : ''}</span>
             <strong>{item.title}</strong>
-            <p>{item.content}</p>
+            <p>{compactText(item.content, 140)}</p>
           </article>
         ))}
       </div>
+    </section>
+  );
+}
+
+function AgentAssistantMessage({ result, content, isRunning }: { result?: AgentResponse; content: string; isRunning: boolean }) {
+  if (!result) {
+    return (
+      <div className="agentAnswerBubble">
+        {content ? <MarkdownMessage content={content} /> : <p className="typingDot">正在思考...</p>}
+      </div>
+    );
+  }
+
+  const references = collectAgentKnowledgeReferences(result);
+
+  return (
+    <div className="agentResponse">
+      <AgentExecutionPanel result={result} isRunning={isRunning} />
+
+      <div className="agentAnswerBubble">
+        {content ? <MarkdownMessage content={content} /> : <p className="typingDot">正在思考...</p>}
+      </div>
+
+      <AgentReferences references={references} />
     </div>
   );
+}
+
+type AgentConfirmationRequest = {
+  id: string;
+  command: string;
+  toolName: 'delete_products' | 'delete_knowledge_entries';
+  toolInput: Record<string, unknown>;
+  title: string;
+  message: string;
+  matchedCount: number;
+  deleteAll: boolean;
+  preview: Array<{ id: string; label: string }>;
+};
+
+function getToolConfirmationRequest(tool: AgentToolResult, command: string): AgentConfirmationRequest | undefined {
+  if (!['delete_products', 'delete_knowledge_entries'].includes(tool.toolName) || tool.status !== 'success') {
+    return undefined;
+  }
+  const toolName = tool.toolName as 'delete_products' | 'delete_knowledge_entries';
+
+  const output = tool.output as {
+    action?: string;
+    confirmationRequired?: boolean;
+    matchedCount?: number;
+    deleteAll?: boolean;
+    preview?: Array<Partial<ProductKnowledge> & { id?: string; title?: string; type?: string }>;
+    message?: string;
+  };
+  if (output.action !== 'confirmation_required' || !output.confirmationRequired) {
+    return undefined;
+  }
+
+  const preview = (output.preview ?? []).map((item, index) => ({
+    id: item.id ?? `${tool.id}-${index}`,
+    label: tool.toolName === 'delete_products'
+      ? [item.brand, item.name].filter(Boolean).join(' ') || item.category || '未命名商品'
+      : [item.title, item.type ? `(${item.type})` : ''].filter(Boolean).join(' ') || '未命名条目'
+  }));
+
+  return {
+    id: tool.id,
+    command,
+    toolName,
+    toolInput: tool.input as Record<string, unknown>,
+    title: toolName === 'delete_products'
+      ? output.deleteAll ? '确认清空商品库' : '确认删除商品'
+      : '确认删除知识库条目',
+    message: output.message || '该工具调用需要确认后才会执行。',
+    matchedCount: output.matchedCount ?? output.preview?.length ?? 0,
+    deleteAll: Boolean(output.deleteAll),
+    preview
+  };
+}
+
+function summarizeConfirmedTool(toolName: string, output: unknown) {
+  const payload = output as {
+    deletedCount?: number;
+    deleted?: Array<{ name?: string; brand?: string; title?: string; category?: string; type?: string }>;
+  };
+  const deleted = payload.deleted ?? [];
+  const labels = deleted.slice(0, 8).map((item) => (
+    toolName === 'delete_products'
+      ? [item.brand, item.name, item.category ? `(${item.category})` : ''].filter(Boolean).join(' ')
+      : [item.title, item.type ? `(${item.type})` : ''].filter(Boolean).join(' ')
+  )).filter(Boolean);
+  const count = payload.deletedCount ?? deleted.length;
+  const suffix = labels.length ? `：${labels.join('、')}${deleted.length > labels.length ? '等' : ''}` : '';
+
+  return toolName === 'delete_products'
+    ? `已确认并删除 ${count} 个商品${suffix}。`
+    : `已确认并删除 ${count} 条知识库条目${suffix}。`;
 }
 
 function AgentPage({
@@ -513,19 +894,22 @@ function AgentPage({
   suggestions: KnowledgeSuggestion[];
   onRefresh: () => Promise<void>;
 }) {
-  const [input, setInput] = useState(agentExamples[0]);
+  const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [confirmingTool, setConfirmingTool] = useState(false);
+  const [confirmationRequest, setConfirmationRequest] = useState<AgentConfirmationRequest>();
+  const [runningAssistantId, setRunningAssistantId] = useState<string>();
   const abortControllerRef = useRef<AbortController | null>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([
     {
       id: 'welcome',
       role: 'assistant',
       content:
-        '我是运营 Agent。你可以直接给我一个运营任务，例如分析客服对话、生成知识库补充建议、整理运营日报或检查转人工原因。我会在对话里展示计划、工具调用和结果。'
+        '我是运营 Agent。你可以直接给我一个运营任务，例如维护商品库、查询库存、整理报表、分析客服数据或生成知识库草稿。我会按任务需要选择工具，并在对话里展示执行链路和结果。'
     }
   ]);
 
-  async function submit(nextInput = input) {
+  async function submit(nextInput = input, options: { riskConfirmed?: boolean } = {}) {
     if (busy) {
       abortControllerRef.current?.abort();
       return;
@@ -538,7 +922,7 @@ function AgentPage({
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
-    const assistantId = crypto.randomUUID();
+    const assistantId = createClientId();
     const initialResult: AgentResponse = {
       taskId: assistantId,
       summary: '',
@@ -555,10 +939,12 @@ function AgentPage({
     };
 
     setInput('');
+    setConfirmationRequest(undefined);
+    setRunningAssistantId(assistantId);
     setBusy(true);
     setMessages((current) => [
       ...current,
-      { id: crypto.randomUUID(), role: 'user', content: command },
+      { id: createClientId(), role: 'user', content: command },
       { id: assistantId, role: 'assistant', content: '', result: initialResult }
     ]);
 
@@ -576,11 +962,6 @@ function AgentPage({
             message.id === assistantId && message.role === 'assistant'
               ? {
                   ...message,
-                  content: step.label === 'LangGraph 启动'
-                    ? message.content
-                    : message.content
-                      ? `${message.content}\n\n> ${step.label}：${step.detail}`
-                      : `> ${step.label}：${step.detail}`,
                   result: {
                     ...(message.result ?? initialResult),
                     trace: [...(message.result?.trace ?? []), step]
@@ -590,13 +971,15 @@ function AgentPage({
           )));
         },
         onTool: (tool) => {
+          const confirmation = getToolConfirmationRequest(tool, command);
+          if (confirmation) {
+            setConfirmationRequest(confirmation);
+          }
+
           setMessages((current) => current.map((message) => (
             message.id === assistantId && message.role === 'assistant'
               ? {
                   ...message,
-                  content: message.content
-                    ? `${message.content}\n\n> 工具 ${tool.toolName} ${tool.status === 'success' ? '执行成功' : '执行失败'}`
-                    : `> 工具 ${tool.toolName} ${tool.status === 'success' ? '执行成功' : '执行失败'}`,
                   result: {
                     ...(message.result ?? initialResult),
                     toolResults: [...(message.result?.toolResults ?? []), tool]
@@ -605,7 +988,7 @@ function AgentPage({
               : message
           )));
         }
-      });
+      }, { riskConfirmed: options.riskConfirmed });
       setMessages((current) => current.map((message) => (
         message.id === assistantId && message.role === 'assistant'
           ? {
@@ -632,7 +1015,43 @@ function AgentPage({
       if (abortControllerRef.current === controller) {
         abortControllerRef.current = null;
       }
+      setRunningAssistantId(undefined);
       setBusy(false);
+    }
+  }
+
+  async function confirmPendingTool() {
+    if (!confirmationRequest || confirmingTool) {
+      return;
+    }
+
+    setConfirmingTool(true);
+    try {
+      const result = await confirmAgentTool({
+        toolName: confirmationRequest.toolName,
+        toolInput: confirmationRequest.toolInput
+      });
+      setMessages((current) => [
+        ...current,
+        {
+          id: createClientId(),
+          role: 'assistant',
+          content: summarizeConfirmedTool(result.toolName, result.output)
+        }
+      ]);
+      setConfirmationRequest(undefined);
+      await onRefresh();
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        {
+          id: createClientId(),
+          role: 'assistant',
+          content: error instanceof Error ? `确认执行失败：${error.message}` : '确认执行失败，请稍后重试。'
+        }
+      ]);
+    } finally {
+      setConfirmingTool(false);
     }
   }
 
@@ -644,9 +1063,7 @@ function AgentPage({
   return (
     <section className="workspacePage agentWorkspace">
       <PageHeader
-        eyebrow="Agent Workspace"
         title="运营 Agent"
-        description="像 Codex 一样通过对话下达任务，Agent 负责拆解、调用工具、沉淀结果。"
         action={
           <div className="headerStats">
             <Stat label="商品库" value={`${productCount}`} />
@@ -664,7 +1081,11 @@ function AgentPage({
                 <div className="messageAvatar">{message.role === 'assistant' ? <Bot size={16} /> : <span>你</span>}</div>
                 <div className="messageBody">
                   {message.role === 'assistant' ? (
-                    <AgentAssistantMessage content={message.content} result={message.result} />
+                    <AgentAssistantMessage
+                      content={message.content}
+                      result={message.result}
+                      isRunning={busy && message.id === runningAssistantId}
+                    />
                   ) : (
                     <p>{message.content}</p>
                   )}
@@ -674,13 +1095,6 @@ function AgentPage({
           </div>
 
           <div className="agentComposerWrap">
-            <div className="examplePrompts">
-              {agentExamples.map((example) => (
-                <button key={example} type="button" onClick={() => setInput(example)}>
-                  {example}
-                </button>
-              ))}
-            </div>
             <form
               className="codexComposer"
               onSubmit={(event) => {
@@ -695,15 +1109,46 @@ function AgentPage({
                 rows={4}
               />
               <div className="composerFooter">
-                <div>
-                  <span>tools: shell, python, operation_data, knowledge_draft</span>
-                </div>
                 <button className="primaryButton" type="submit">
                   {busy ? <X size={16} /> : <Play size={16} />}
                   {busy ? '停止' : '运行'}
                 </button>
               </div>
             </form>
+
+            {confirmationRequest && (
+              <div className="agentConfirmationCard">
+                <div>
+                  <AlertTriangle size={16} />
+                  <strong>{confirmationRequest.title}</strong>
+                </div>
+                <p>{confirmationRequest.message}</p>
+                {confirmationRequest.preview.length ? (
+                  <div className="confirmationPreview">
+                    {confirmationRequest.preview.slice(0, 6).map((item) => (
+                      <span key={item.id}>{item.label}</span>
+                    ))}
+                    {confirmationRequest.matchedCount > 6 && <span>等 {confirmationRequest.matchedCount} 项</span>}
+                  </div>
+                ) : (
+                  <small>没有匹配到可删除商品。</small>
+                )}
+                <div className="confirmationActions">
+                  <button className="ghostButton" disabled={confirmingTool} onClick={() => setConfirmationRequest(undefined)} type="button">
+                    取消
+                  </button>
+                  <button
+                    className="primaryButton danger"
+                    disabled={confirmingTool || confirmationRequest.matchedCount === 0}
+                    onClick={confirmPendingTool}
+                    type="button"
+                  >
+                    <Trash2 size={15} />
+                    {confirmingTool ? '执行中' : confirmationRequest.toolName === 'delete_products' ? '确认删除商品' : '确认删除条目'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -2057,21 +2502,21 @@ function PlaceholderPage({
     eyebrow: string;
     title: string;
     description: string;
-    icon: typeof Package;
+    icon: PhosphorIcon;
     actions: string[];
   }> = {
     analysis: {
       eyebrow: 'Dialogue Analysis',
       title: '对话分析',
       description: '这里会承接 Agent 分析结果，展示高频问题、转人工原因、情绪分布和知识缺口。',
-      icon: Gauge,
+      icon: ChartDonut,
       actions: ['高频问题', '转人工原因', '情绪分类', '知识缺口']
     },
     reports: {
       eyebrow: 'Reports',
       title: '运营报表',
       description: '这里会输出每日咨询量、自动回复率、转人工率、商品咨询排行和优化动作。',
-      icon: FileText,
+      icon: PhosphorFileText,
       actions: ['日报生成', '自动回复率', '商品排行', '优化建议']
     }
   };
@@ -2083,7 +2528,7 @@ function PlaceholderPage({
     <section className="workspacePage">
       <PageHeader eyebrow={item.eyebrow} title={item.title} description={item.description} />
       <div className="placeholderPanel">
-        <Icon size={28} />
+        <Icon size={30} weight="duotone" />
         <div>
           <h2>{item.title}</h2>
           <p>{item.description}</p>
@@ -2189,12 +2634,12 @@ export function App() {
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
               >
-                <Icon size={17} />
+                <Icon size={19} weight="duotone" />
                 <span>
                   <strong>{tab.label}</strong>
                   <small>{tab.description}</small>
                 </span>
-                {active && <ChevronRight size={16} />}
+                {active && <CaretRight size={15} weight="bold" />}
               </button>
             );
           })}

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { approveKnowledgeSuggestion, listSuggestions, runAgentTask } from '../services/agentService.js';
+import { approveKnowledgeSuggestion, confirmHighRiskAgentTool, listSuggestions, runAgentTask } from '../services/agentService.js';
 
 const router = Router();
 
@@ -15,7 +15,7 @@ router.post('/tasks', async (req, res) => {
   req.on('aborted', abortTask);
   res.on('close', abortTask);
 
-  const schema = z.object({ input: z.string().min(1) });
+  const schema = z.object({ input: z.string().min(1), riskConfirmed: z.boolean().optional() });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
     req.off('aborted', abortTask);
@@ -25,7 +25,9 @@ router.post('/tasks', async (req, res) => {
   }
 
   try {
-    const result = await runAgentTask(parsed.data.input, controller.signal);
+    const result = await runAgentTask(parsed.data.input, controller.signal, undefined, {
+      riskConfirmed: parsed.data.riskConfirmed
+    });
     if (!controller.signal.aborted && !res.headersSent) {
       res.json(result);
     }
@@ -50,7 +52,7 @@ router.post('/tasks/stream', async (req, res) => {
   req.on('aborted', abortTask);
   res.on('close', abortTask);
 
-  const schema = z.object({ input: z.string().min(1) });
+  const schema = z.object({ input: z.string().min(1), riskConfirmed: z.boolean().optional() });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
     req.off('aborted', abortTask);
@@ -92,6 +94,8 @@ router.post('/tasks/stream', async (req, res) => {
       },
       onTrace: (step) => send('trace', step),
       onToolResult: (toolResult) => send('tool', toolResult)
+    }, {
+      riskConfirmed: parsed.data.riskConfirmed
     });
 
     sendSummaryIfNeeded(result.summary);
@@ -118,6 +122,24 @@ router.post('/suggestions/:id/approve', (req, res) => {
     return;
   }
   res.json(result);
+});
+
+router.post('/tools/confirm', (req, res) => {
+  const schema = z.object({
+    toolName: z.enum(['delete_products', 'delete_knowledge_entries']),
+    input: z.record(z.string(), z.unknown())
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    res.json(confirmHighRiskAgentTool(parsed.data.toolName, parsed.data.input));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Tool confirmation failed' });
+  }
 });
 
 export default router;

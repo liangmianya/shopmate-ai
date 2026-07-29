@@ -237,11 +237,21 @@ export async function sendChatStream(
   return final;
 }
 
-export function runAgentTask(input: string, signal?: AbortSignal) {
+export function runAgentTask(input: string, signal?: AbortSignal, options: { riskConfirmed?: boolean } = {}) {
   return request<AgentResponse>('/api/agent/tasks', {
     method: 'POST',
     signal,
-    body: JSON.stringify({ input })
+    body: JSON.stringify({ input, riskConfirmed: options.riskConfirmed })
+  });
+}
+
+export function confirmAgentTool(input: { toolName: 'delete_products' | 'delete_knowledge_entries'; toolInput: Record<string, unknown> }) {
+  return request<{ toolName: string; output: unknown }>('/api/agent/tools/confirm', {
+    method: 'POST',
+    body: JSON.stringify({
+      toolName: input.toolName,
+      input: input.toolInput
+    })
   });
 }
 
@@ -252,13 +262,14 @@ export async function runAgentTaskStream(
     onChunk: (content: string) => void;
     onTrace?: (step: AgentTraceStep) => void;
     onTool?: (tool: AgentToolResult) => void;
-  }
+  },
+  options: { riskConfirmed?: boolean } = {}
 ) {
   const response = await fetch('/api/agent/tasks/stream', {
     method: 'POST',
     signal,
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ input })
+    body: JSON.stringify({ input, riskConfirmed: options.riskConfirmed })
   });
 
   if (!response.ok || !response.body) {

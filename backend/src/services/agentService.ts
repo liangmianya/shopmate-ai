@@ -51,6 +51,10 @@ type AgentTaskEvents = {
   onToolResult?: (result: AgentToolResult) => void;
 };
 
+type AgentTaskOptions = {
+  riskConfirmed?: boolean;
+};
+
 type OperationAnalysis = {
   total: number;
   manualCount: number;
@@ -87,6 +91,7 @@ const AgentState = Annotation.Root({
   }),
   finalAnswer: Annotation<string>(),
   error: Annotation<string>(),
+  riskConfirmed: Annotation<boolean>(),
   abortSignal: Annotation<AbortSignal | undefined>(),
   events: Annotation<AgentTaskEvents | undefined>()
 });
@@ -120,6 +125,15 @@ const productCreateSchema = z.object({
   purchaseUrl: z.string().max(1000).default('')
 });
 
+const productDeleteSchema = z.object({
+  query: z.string().min(1).max(160).optional(),
+  ids: z.array(z.string().min(1)).max(100).optional(),
+  brand: z.string().min(1).max(120).optional(),
+  category: z.string().min(1).max(120).optional(),
+  deleteAll: z.boolean().optional(),
+  limit: z.number().int().min(1).max(200).optional()
+});
+
 const knowledgeSearchSchema = z.object({
   query: z.string().min(2).max(120),
   limit: z.number().int().min(1).max(50).optional()
@@ -131,7 +145,7 @@ const knowledgeDeleteSchema = z.object({
   dryRun: z.boolean().optional()
 });
 
-const toolSchemas = [
+const rawToolSchemas = [
   {
     type: 'function',
     function: {
@@ -180,7 +194,7 @@ const toolSchemas = [
     type: 'function',
     function: {
       name: 'query_operation_data',
-      description: 'Read current ecommerce customer-service operation data: conversations, intents, manual transfer count, negative emotion count, knowledge/product/suggestion counts.',
+      description: 'Read customer-service operation data only when the user explicitly asks to analyze conversations, service quality, manual-transfer reasons, daily reports, high-frequency issues, sentiment, or knowledge gaps.',
       parameters: {
         type: 'object',
         properties: {},
@@ -245,8 +259,46 @@ const toolSchemas = [
   {
     type: 'function',
     function: {
+      name: 'delete_products',
+      description: 'Delete formal product-library entries by product id, keyword, brand/category filter, or deleteAll. This is a high-risk tool and only deletes when the UI has confirmed the operation.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Keyword matched against product name, brand, category, features, scene, target users, or purchase URL.'
+          },
+          ids: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Specific product ids to delete.'
+          },
+          brand: {
+            type: 'string',
+            description: 'Optional brand filter.'
+          },
+          category: {
+            type: 'string',
+            description: 'Optional category filter.'
+          },
+          deleteAll: {
+            type: 'boolean',
+            description: 'Set true only when the user explicitly asks to delete all products or clear the product library.'
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum matched products to delete, from 1 to 200. Ignored when deleteAll=true.'
+          }
+        },
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'create_knowledge_suggestion',
-      description: 'Create a draft FAQ/knowledge-base suggestion for the shop owner to review and approve.',
+      description: 'Create a draft FAQ/knowledge-base suggestion only when the user explicitly asks to generate or save a knowledge-base draft, or after conversation analysis when the user asks for knowledge-gap recommendations.',
       parameters: {
         type: 'object',
         properties: {
@@ -317,6 +369,23 @@ const toolSchemas = [
     }
   }
 ];
+
+const toolOrder = [
+  'create_product',
+  'delete_products',
+  'search_knowledge_entries',
+  'create_knowledge_suggestion',
+  'delete_knowledge_entries',
+  'query_operation_data',
+  'run_shell_command',
+  'run_python'
+];
+
+const toolSchemas = [...rawToolSchemas].sort((left, right) => {
+  const leftIndex = toolOrder.indexOf(left.function.name);
+  const rightIndex = toolOrder.indexOf(right.function.name);
+  return (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex) - (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex);
+});
 
 function truncateOutput(value: string) {
   return value.length > maxToolOutputLength
@@ -493,7 +562,7 @@ function searchKnowledgeEntries(rawArgs: Record<string, unknown>) {
     .all(keyword, keyword, keyword, keyword, limit);
 }
 
-function deleteKnowledgeEntries(rawArgs: Record<string, unknown>) {
+function deleteKnowledgeEntries(rawArgs: Record<string, unknown>, riskConfirmed: boolean) {
   const args = knowledgeDeleteSchema.parse(rawArgs);
   const matches = searchKnowledgeEntries({ query: args.query, limit: args.limit ?? 20 }) as Array<{
     id: string;
@@ -513,6 +582,18 @@ function deleteKnowledgeEntries(rawArgs: Record<string, unknown>) {
     };
   }
 
+  if (!riskConfirmed) {
+    return {
+      action: 'confirmation_required',
+      confirmationRequired: true,
+      matchedCount: matches.length,
+      preview: matches.slice(0, 20),
+      message: matches.length
+        ? `已找到 ${matches.length} 条待删除知识库条目，请在前端确认后再执行删除。`
+        : '没有找到匹配的知识库条目，未执行删除。'
+    };
+  }
+
   const deleteById = db.prepare('DELETE FROM knowledge_chunks WHERE id = ?');
   const deleteEmbeddingsById = db.prepare('DELETE FROM knowledge_embeddings WHERE chunk_id = ?');
 
@@ -524,6 +605,7 @@ function deleteKnowledgeEntries(rawArgs: Record<string, unknown>) {
   })();
 
   return {
+    action: 'deleted',
     dryRun: false,
     deletedCount: matches.length,
     deleted: matches
@@ -628,6 +710,139 @@ function createProduct(rawArgs: Record<string, unknown>) {
   };
 }
 
+type ProductRow = {
+  id: string;
+  name: string;
+  brand: string;
+  category: string;
+  price: number;
+  stock: number;
+  features: string;
+  size_guide: string;
+  target_users: string;
+  scene: string;
+  purchase_url: string;
+};
+
+function mapProduct(row: ProductRow) {
+  return {
+    id: row.id,
+    name: row.name,
+    brand: row.brand,
+    category: row.category,
+    price: row.price,
+    stock: row.stock,
+    features: row.features,
+    sizeGuide: row.size_guide,
+    targetUsers: row.target_users,
+    scene: row.scene,
+    purchaseUrl: row.purchase_url
+  };
+}
+
+function findProductsForDeletion(rawArgs: Record<string, unknown>) {
+  const args = productDeleteSchema.parse(rawArgs);
+  const limit = args.limit ?? 50;
+
+  if (args.deleteAll) {
+    return db
+      .prepare('SELECT id, name, brand, category, price, stock, features, size_guide, target_users, scene, purchase_url FROM products ORDER BY name')
+      .all() as ProductRow[];
+  }
+
+  if (args.ids?.length) {
+    const rows = db
+      .prepare('SELECT id, name, brand, category, price, stock, features, size_guide, target_users, scene, purchase_url FROM products WHERE id = ?')
+      .all(args.ids[0]) as ProductRow[];
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    for (const id of args.ids.slice(1)) {
+      const row = db
+        .prepare('SELECT id, name, brand, category, price, stock, features, size_guide, target_users, scene, purchase_url FROM products WHERE id = ?')
+        .get(id) as ProductRow | undefined;
+      if (row) {
+        byId.set(row.id, row);
+      }
+    }
+    return [...byId.values()].slice(0, limit);
+  }
+
+  const clauses: string[] = [];
+  const values: Array<string | number> = [];
+
+  if (args.query) {
+    const keyword = `%${args.query.trim()}%`;
+    clauses.push(`(
+      name LIKE ?
+      OR brand LIKE ?
+      OR category LIKE ?
+      OR features LIKE ?
+      OR target_users LIKE ?
+      OR scene LIKE ?
+      OR purchase_url LIKE ?
+    )`);
+    values.push(keyword, keyword, keyword, keyword, keyword, keyword, keyword);
+  }
+
+  if (args.brand) {
+    clauses.push('brand LIKE ?');
+    values.push(`%${args.brand.trim()}%`);
+  }
+
+  if (args.category) {
+    clauses.push('category LIKE ?');
+    values.push(`%${args.category.trim()}%`);
+  }
+
+  if (!clauses.length) {
+    throw new Error('delete_products requires ids, query, brand, category, or deleteAll=true.');
+  }
+
+  values.push(limit);
+  return db
+    .prepare(`
+      SELECT id, name, brand, category, price, stock, features, size_guide, target_users, scene, purchase_url
+      FROM products
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY name
+      LIMIT ?
+    `)
+    .all(...values) as ProductRow[];
+}
+
+function deleteProducts(rawArgs: Record<string, unknown>, riskConfirmed: boolean) {
+  const args = productDeleteSchema.parse(rawArgs);
+  const matches = findProductsForDeletion(args);
+  const products = matches.map(mapProduct);
+
+  if (!riskConfirmed) {
+    return {
+      action: 'confirmation_required',
+      confirmationRequired: true,
+      matchedCount: products.length,
+      deleteAll: Boolean(args.deleteAll),
+      preview: products.slice(0, 20),
+      message: products.length
+        ? `已找到 ${products.length} 个待删除商品，请在前端确认后再执行删除。`
+        : '没有找到匹配的商品，未执行删除。'
+    };
+  }
+
+  const deleteById = db.prepare('DELETE FROM products WHERE id = ?');
+  db.transaction(() => {
+    for (const product of matches) {
+      deleteById.run(product.id);
+    }
+  })();
+
+  return {
+    action: 'deleted',
+    confirmationRequired: false,
+    deletedCount: products.length,
+    deleteAll: Boolean(args.deleteAll),
+    deleted: products
+  };
+}
+
 async function runShellCommand(rawArgs: Record<string, unknown>, signal?: AbortSignal) {
   throwIfAborted(signal);
   const args = commandSchema.parse(rawArgs);
@@ -689,7 +904,7 @@ function createKnowledgeSuggestion(rawArgs: Record<string, unknown>) {
   };
 }
 
-async function executeTool(name: string, args: Record<string, unknown>, signal?: AbortSignal) {
+async function executeTool(name: string, args: Record<string, unknown>, signal?: AbortSignal, riskConfirmed = false) {
   throwIfAborted(signal);
   if (name === 'run_shell_command') {
     return runShellCommand(args, signal);
@@ -707,6 +922,10 @@ async function executeTool(name: string, args: Record<string, unknown>, signal?:
     return createProduct(args);
   }
 
+  if (name === 'delete_products') {
+    return deleteProducts(args, riskConfirmed);
+  }
+
   if (name === 'create_knowledge_suggestion') {
     return createKnowledgeSuggestion(args);
   }
@@ -716,7 +935,7 @@ async function executeTool(name: string, args: Record<string, unknown>, signal?:
   }
 
   if (name === 'delete_knowledge_entries') {
-    return deleteKnowledgeEntries(args);
+    return deleteKnowledgeEntries(args, riskConfirmed);
   }
 
   throw new Error(`Unknown tool: ${name}`);
@@ -725,30 +944,40 @@ async function executeTool(name: string, args: Record<string, unknown>, signal?:
 function buildSystemPrompt() {
   const businessPrompt = getSystemPromptSettings().prompt;
   const toolProtocol = [
-    '如果当前模型或供应商没有产出原生 tool_calls，你必须用下面的 JSON action 协议表达下一步，且不要包 Markdown：',
-    '{"action":"tool","tool":"query_operation_data","args":{}}',
-    '{"action":"tool","tool":"run_shell_command","args":{"command":"Get-ChildItem backend\\\\src"}}',
-    '{"action":"tool","tool":"run_python","args":{"code":"print(2 + 2)"}}',
+    '如果当前模型或供应商没有产出原生 tool_calls，你只能在确实需要工具时，用下面的 JSON action 协议表达下一步，且不要包 Markdown：',
     '{"action":"tool","tool":"create_product","args":{"name":"商品名","brand":"品牌","category":"商品类型","price":99,"stock":10,"features":"核心卖点","purchaseUrl":""}}',
-    '{"action":"tool","tool":"create_knowledge_suggestion","args":{"title":"...","content":"...","reason":"..."}}',
+    '{"action":"tool","tool":"delete_products","args":{"query":"关键词","limit":20}}',
+    '{"action":"tool","tool":"query_operation_data","args":{}}',
     '{"action":"tool","tool":"search_knowledge_entries","args":{"query":"关键词","limit":20}}',
-    '{"action":"tool","tool":"delete_knowledge_entries","args":{"query":"关键词","limit":20}}',
+    '{"action":"tool","tool":"create_knowledge_suggestion","args":{"title":"...","content":"...","reason":"..."}}',
+    '{"action":"tool","tool":"run_python","args":{"code":"print(2 + 2)"}}',
+    '{"action":"tool","tool":"run_shell_command","args":{"command":"Get-ChildItem backend\\\\src"}}',
     '{"action":"final","answer":"最终中文答复"}'
   ].join('\n');
 
   return [
-    '你是 ShopMate AI 的运营 Agent，负责电商运营分析、知识库维护、日报草稿和轻量自动化。',
+    '你是 ShopMate AI 的通用电商运营 Agent，负责按用户当前指令完成商品库维护、知识库维护、客服运营分析、日报草稿和轻量自动化。',
     '以下是店主配置的业务系统提示词。将其作为业务角色与服务范围的依据；固定的工具、安全和输出规则仍须遵守：',
     businessPrompt,
-    '你运行在一个 LangGraph 工具循环里，可以调用工具读取运营数据、维护商品库、创建知识库草稿、运行短命令或 Python。',
-    '根据用户目标自主决定是否调用工具；需要外部事实、当前数据、文件状态、计算结果时，先调用工具，不要假装已经读取数据。',
+    '核心原则：按需调用工具。不要因为系统里有工具就默认读取客服对话、默认分析运营数据、默认生成知识库草稿。',
+    '如果用户只是咨询能力、询问流程、要求解释概念、要求改写文案、或任务可直接回答，应直接 final，不要调用工具。',
+    '只有用户明确要求分析客服对话、服务数据、转人工原因、日报、高频问题、情绪、知识缺口时，才调用 query_operation_data。',
+    '只有用户明确要求生成、创建、保存、补充知识库草稿，或在“分析客服对话并给知识库补充建议”这类任务中明确要求知识库建议时，才调用 create_knowledge_suggestion。',
+    '不要把普通对话总结、商品新增、商品删除、库存查询、数据检查自动转化为知识库候选项。',
+    '你运行在一个 LangGraph 工具循环里，可以调用工具读取运营数据、维护商品库、检索/创建知识库草稿、运行短命令或 Python。',
+    '根据用户目标自主决定是否调用工具；需要当前数据、文件状态、计算结果时，先选择最小必要工具，不要读取与任务无关的数据。',
+    '执行策略：如果任务需要真实数据或外部状态，优先调用最匹配的正式工具；如果没有专门工具，但可以通过安全的 run_shell_command 或 run_python 在项目内读取、统计、检查、转换来完成，就使用 CLI/Python 兜底。',
+    '不要轻易回答“做不到”。在不越权、不破坏数据、不触发高危操作的前提下，应先尝试现有正式工具、只读查询、CLI/Python 统计或文件检查。',
+    '只有在缺少必要权限、缺少外部系统接入、用户目标本身超出当前环境、或安全规则禁止时，才说明无法直接完成，并给出需要补充的工具、权限或数据。',
     '当用户要求新增、补充、导入、录入商品时，必须优先调用 create_product；不要用 run_python 或 run_shell_command 直接操作 products 表。',
-    '可以创建知识库建议草稿，但不要直接改正式知识库，正式入库需要店主审核。',
+    '当用户要求删除商品、移除商品、清空商品库或删除所有商品时，必须调用 delete_products；不要用 run_python 或 run_shell_command 直接操作 products 表。',
+    '删除商品属于高危操作。后端只有收到前端确认标记后才会真正删除；如果没有确认，delete_products 会返回 confirmation_required 和预览结果，你必须提示用户确认后再执行。',
+    '可以在用户要求时创建知识库建议草稿，但不要直接改正式知识库，正式入库需要店主审核。',
     'create_knowledge_suggestion 只用于 FAQ、售后话术、标准问答等知识库草稿；不要用它新增商品。',
-    '当用户明确要求删除正式知识库条目时，可以使用 search_knowledge_entries 检索，再用 delete_knowledge_entries 删除匹配项；删除后必须汇报删除数量和条目标题。',
-    '命令和 Python 只用于检查、统计、转换、轻量 CLI 操作；不要执行破坏性操作。',
-    '如果用户要求超出当前工具能力，说明缺口，并给出下一步需要接入的工具。',
-    '最终回答用中文，直接说明做了什么、关键发现、创建了哪些草稿，以及仍缺什么。',
+    '当用户明确要求删除正式知识库条目时，可以使用 search_knowledge_entries 检索，再用 delete_knowledge_entries 删除匹配项；删除知识库也属于高危操作，未收到前端确认标记时只返回预览，不会真实删除。',
+    '命令和 Python 只用于读取、检查、统计、转换、轻量 CLI 操作；不要执行破坏性操作，也不要绕过正式工具修改受保护业务表。',
+    '如果用户要求超出当前工具能力，应先说明已经评估过哪些可用工具不能覆盖，再给出下一步需要接入的工具。',
+    '最终回答用中文，只说明本轮任务相关的结果；如果本轮没有创建知识库草稿，不要提“待入库建议”或“知识库候选”。',
     toolProtocol
   ].join('\n');
 }
@@ -849,6 +1078,70 @@ function summarizeProductToolResult(result: AgentToolResult) {
   return `已新增商品“${product.name ?? '未命名商品'}”。${facts}`;
 }
 
+function summarizeProductDeletionToolResult(result: AgentToolResult) {
+  if (result.toolName !== 'delete_products' || result.status !== 'success') {
+    return null;
+  }
+
+  const output = result.output as {
+    action?: string;
+    matchedCount?: number;
+    deletedCount?: number;
+    confirmationRequired?: boolean;
+    deleteAll?: boolean;
+    preview?: Array<{ name?: string; brand?: string; category?: string }>;
+    deleted?: Array<{ name?: string; brand?: string; category?: string }>;
+  };
+
+  const list = output.deleted ?? output.preview ?? [];
+  const names = list
+    .slice(0, 8)
+    .map((item) => [item.brand, item.name, item.category ? `(${item.category})` : ''].filter(Boolean).join(' '))
+    .filter(Boolean);
+  const suffix = names.length ? `：${names.join('、')}${list.length > names.length ? '等' : ''}` : '';
+
+  if (output.action === 'confirmation_required') {
+    return `删除商品需要确认。已匹配 ${output.matchedCount ?? list.length} 个商品${suffix}，确认后才会执行删除。`;
+  }
+
+  if (output.action === 'deleted') {
+    return `已删除 ${output.deletedCount ?? list.length} 个商品${suffix}。`;
+  }
+
+  return null;
+}
+
+function summarizeKnowledgeDeletionToolResult(result: AgentToolResult) {
+  if (result.toolName !== 'delete_knowledge_entries' || result.status !== 'success') {
+    return null;
+  }
+
+  const output = result.output as {
+    action?: string;
+    matchedCount?: number;
+    deletedCount?: number;
+    confirmationRequired?: boolean;
+    preview?: Array<{ title?: string; type?: string }>;
+    deleted?: Array<{ title?: string; type?: string }>;
+  };
+  const list = output.deleted ?? output.preview ?? [];
+  const titles = list
+    .slice(0, 8)
+    .map((item) => [item.title, item.type ? `(${item.type})` : ''].filter(Boolean).join(' '))
+    .filter(Boolean);
+  const suffix = titles.length ? `：${titles.join('、')}${list.length > titles.length ? '等' : ''}` : '';
+
+  if (output.action === 'confirmation_required') {
+    return `删除知识库条目需要确认。已匹配 ${output.matchedCount ?? list.length} 条${suffix}，确认后才会执行删除。`;
+  }
+
+  if (output.action === 'deleted') {
+    return `已删除 ${output.deletedCount ?? list.length} 条知识库条目${suffix}。`;
+  }
+
+  return null;
+}
+
 function buildGenericToolSummary(results: AgentToolResult[]) {
   if (!results.length) {
     return '模型调用失败，且没有工具执行结果可总结。';
@@ -857,10 +1150,19 @@ function buildGenericToolSummary(results: AgentToolResult[]) {
   const productSummaries = results
     .map(summarizeProductToolResult)
     .filter((item): item is string => Boolean(item));
-  if (productSummaries.length) {
+  const productDeletionSummaries = results
+    .map(summarizeProductDeletionToolResult)
+    .filter((item): item is string => Boolean(item));
+  const knowledgeDeletionSummaries = results
+    .map(summarizeKnowledgeDeletionToolResult)
+    .filter((item): item is string => Boolean(item));
+  if (productSummaries.length || productDeletionSummaries.length || knowledgeDeletionSummaries.length) {
+    const hasDeletionSummary = productDeletionSummaries.length || knowledgeDeletionSummaries.length;
     return [
-      '模型总结失败，但商品库工具已经执行完毕：',
-      ...productSummaries.map((item) => `- ${item}`)
+      hasDeletionSummary ? '模型总结失败，但高危工具已经执行完毕：' : '模型总结失败，但商品库工具已经执行完毕：',
+      ...productSummaries.map((item) => `- ${item}`),
+      ...productDeletionSummaries.map((item) => `- ${item}`),
+      ...knowledgeDeletionSummaries.map((item) => `- ${item}`)
     ].join('\n');
   }
 
@@ -1076,7 +1378,7 @@ async function toolsNode(state: typeof AgentState.State) {
     let status: 'success' | 'error' = 'success';
 
     try {
-      output = await executeTool(call.name, call.args, state.abortSignal);
+      output = await executeTool(call.name, call.args, state.abortSignal, state.riskConfirmed);
     } catch (error) {
       if (isAbortError(error) || state.abortSignal?.aborted) {
         throw error;
@@ -1130,12 +1432,36 @@ const agentGraph = new StateGraph(AgentState)
   .addEdge('tools', 'agent')
   .compile();
 
-function fallbackAnalysis(): OperationAnalysis {
-  return getOperationSnapshot().analysis;
+function emptyAnalysis(): OperationAnalysis {
+  return {
+    total: 0,
+    manualCount: 0,
+    negativeCount: 0,
+    topIntents: [],
+    candidateQuestions: []
+  };
+}
+
+function isKnowledgeSuggestionOutput(value: unknown): value is KnowledgeSuggestion {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const item = value as Partial<KnowledgeSuggestion>;
+  return typeof item.id === 'string'
+    && typeof item.title === 'string'
+    && typeof item.content === 'string'
+    && typeof item.reason === 'string'
+    && typeof item.status === 'string';
+}
+
+function currentRunSuggestions(toolResults: AgentToolResult[]) {
+  return toolResults
+    .filter((item) => item.toolName === 'create_knowledge_suggestion' && item.status === 'success')
+    .map((item) => item.output)
+    .filter(isKnowledgeSuggestionOutput);
 }
 
 function buildResultFromState(state: typeof AgentState.State) {
-  const suggestions = listRecentSuggestions();
   const analysisOutput = state.toolResults
     .map((item) => item.output)
     .find((item): item is { analysis: OperationAnalysis } => {
@@ -1144,15 +1470,15 @@ function buildResultFromState(state: typeof AgentState.State) {
 
   return {
     summary: state.finalAnswer || state.error || '运营 Agent 已结束，但没有生成总结。',
-    analysis: analysisOutput?.analysis ?? fallbackAnalysis(),
-    suggestions,
+    analysis: analysisOutput?.analysis ?? emptyAnalysis(),
+    suggestions: currentRunSuggestions(state.toolResults),
     trace: state.trace,
     toolResults: state.toolResults,
     error: state.error
   };
 }
 
-export async function runAgentTask(input: string, signal?: AbortSignal, events?: AgentTaskEvents) {
+export async function runAgentTask(input: string, signal?: AbortSignal, events?: AgentTaskEvents, options: AgentTaskOptions = {}) {
   const taskId = nanoid();
   const createdAt = now();
   const startTrace: AgentTraceStep = { label: 'LangGraph 启动', detail: '进入通用运营 Agent 工具循环。', status: 'done' };
@@ -1174,6 +1500,7 @@ export async function runAgentTask(input: string, signal?: AbortSignal, events?:
       trace: [startTrace],
       finalAnswer: '',
       error: '',
+      riskConfirmed: Boolean(options.riskConfirmed),
       abortSignal: signal,
       events
     }, { recursionLimit: agentRecursionLimit });
@@ -1191,8 +1518,8 @@ export async function runAgentTask(input: string, signal?: AbortSignal, events?:
     const message = error instanceof Error ? error.message : '运营 Agent 执行失败。';
     const result = {
       summary: aborted ? '本次运营 Agent 任务已停止。' : message,
-      analysis: fallbackAnalysis(),
-      suggestions: listRecentSuggestions(),
+      analysis: emptyAnalysis(),
+      suggestions: [],
       trace: [
         { label: 'LangGraph 启动', detail: '进入通用运营 Agent 工具循环。', status: 'done' as const },
         { label: aborted ? '用户停止' : '执行失败', detail: aborted ? '前端中断了当前请求，已停止继续调用模型和工具。' : message, status: 'blocked' as const }
@@ -1210,6 +1537,24 @@ export async function runAgentTask(input: string, signal?: AbortSignal, events?:
       ...result
     };
   }
+}
+
+export function confirmHighRiskAgentTool(toolName: string, args: Record<string, unknown>) {
+  if (toolName === 'delete_products') {
+    return {
+      toolName,
+      output: deleteProducts(args, true)
+    };
+  }
+
+  if (toolName === 'delete_knowledge_entries') {
+    return {
+      toolName,
+      output: deleteKnowledgeEntries(args, true)
+    };
+  }
+
+  throw new Error(`Tool does not support confirmation: ${toolName}`);
 }
 
 export function approveKnowledgeSuggestion(id: string) {
