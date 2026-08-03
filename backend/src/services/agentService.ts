@@ -1579,6 +1579,19 @@ export function approveKnowledgeSuggestion(id: string) {
   return { ...suggestion, status: 'approved' };
 }
 
+export function deleteKnowledgeSuggestion(id: string) {
+  const suggestion = db
+    .prepare('SELECT id, title, content, reason, status FROM knowledge_suggestions WHERE id = ?')
+    .get(id) as { id: string; title: string; content: string; reason: string; status: string } | undefined;
+
+  if (!suggestion) {
+    return null;
+  }
+
+  db.prepare('DELETE FROM knowledge_suggestions WHERE id = ?').run(id);
+  return suggestion;
+}
+
 export function listSuggestions() {
   return listRecentSuggestions();
 }

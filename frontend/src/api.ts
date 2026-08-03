@@ -350,6 +350,12 @@ export function approveSuggestion(id: string) {
   });
 }
 
+export function deleteSuggestion(id: string) {
+  return request<KnowledgeSuggestion>(`/api/agent/suggestions/${id}`, {
+    method: 'DELETE'
+  });
+}
+
 export function loadProducts() {
   return request<{ products: ProductKnowledge[] }>('/api/products');
 }

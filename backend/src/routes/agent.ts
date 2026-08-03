@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { approveKnowledgeSuggestion, confirmHighRiskAgentTool, listSuggestions, runAgentTask } from '../services/agentService.js';
+import { approveKnowledgeSuggestion, confirmHighRiskAgentTool, deleteKnowledgeSuggestion, listSuggestions, runAgentTask } from '../services/agentService.js';
 
 const router = Router();
 
@@ -117,6 +117,15 @@ router.get('/suggestions', (_req, res) => {
 
 router.post('/suggestions/:id/approve', (req, res) => {
   const result = approveKnowledgeSuggestion(req.params.id);
+  if (!result) {
+    res.status(404).json({ error: 'Suggestion not found' });
+    return;
+  }
+  res.json(result);
+});
+
+router.delete('/suggestions/:id', (req, res) => {
+  const result = deleteKnowledgeSuggestion(req.params.id);
   if (!result) {
     res.status(404).json({ error: 'Suggestion not found' });
     return;

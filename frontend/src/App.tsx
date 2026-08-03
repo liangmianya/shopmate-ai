@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity,
   AlertTriangle,
   Archive,
   Bot,
@@ -14,7 +13,6 @@ import {
   Link,
   MessagesSquare,
   Package,
-  Play,
   Plus,
   RefreshCcw,
   Search,
@@ -31,6 +29,7 @@ import {
   ChatsCircle,
   FileText as PhosphorFileText,
   GearSix,
+  PaperPlaneTilt,
   Robot,
   ShareNetwork
 } from '@phosphor-icons/react';
@@ -56,6 +55,7 @@ import {
   createProducts,
   deleteKnowledge,
   deleteProduct,
+  deleteSuggestion,
   loadEmbeddingSettings,
   loadKnowledge,
   loadLlmSettings,
@@ -395,24 +395,18 @@ function MarkdownMessage({ content }: { content: string }) {
 }
 
 function PageHeader({
-  eyebrow,
   title,
-  description,
   action
 }: {
-  eyebrow?: string;
   title: string;
-  description?: string;
   action?: React.ReactNode;
 }) {
   return (
     <header className="workspaceHeader">
-      <div>
-        {eyebrow && <p className="eyebrow">{eyebrow}</p>}
+      <div className="workspaceHeaderTitle">
         <h1>{title}</h1>
-        {description && <p className="pageDescription">{description}</p>}
       </div>
-      {action}
+      {action && <div className="workspaceHeaderAction">{action}</div>}
     </header>
   );
 }
@@ -1055,11 +1049,6 @@ function AgentPage({
     }
   }
 
-  const latestResult = [...messages]
-    .reverse()
-    .find((message): message is Extract<AgentMessage, { role: 'assistant'; result?: AgentResponse }> => message.role === 'assistant' && Boolean(message.result))
-    ?.result;
-
   return (
     <section className="workspacePage agentWorkspace">
       <PageHeader
@@ -1109,9 +1098,13 @@ function AgentPage({
                 rows={4}
               />
               <div className="composerFooter">
-                <button className="primaryButton" type="submit">
-                  {busy ? <X size={16} /> : <Play size={16} />}
-                  {busy ? '停止' : '运行'}
+                <button
+                  aria-label={busy ? '停止运行' : '运行任务'}
+                  className="primaryButton iconOnly"
+                  title={busy ? '停止运行' : '运行任务'}
+                  type="submit"
+                >
+                  {busy ? <X size={16} /> : <PaperPlaneTilt size={17} weight="duotone" />}
                 </button>
               </div>
             </form>
@@ -1151,44 +1144,6 @@ function AgentPage({
             )}
           </div>
         </div>
-
-        <aside className="agentSide">
-          <div className="sidePanel">
-            <div className="sideTitle">
-              <Activity size={16} />
-              <strong>运行状态</strong>
-            </div>
-            <div className="statusList">
-              {(latestResult?.trace.slice(-5) ?? [
-                { label: 'LangGraph', detail: '等待任务输入。', status: 'pending' as const }
-              ]).map((step, index) => (
-                <span key={`${step.label}-${index}`}>
-                  {step.status === 'blocked' ? <AlertTriangle size={13} /> : <Check size={13} />}
-                  {step.label}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          <div className="sidePanel">
-            <div className="sideTitle">
-              <ClipboardCheck size={16} />
-              <strong>最近知识建议</strong>
-            </div>
-            {suggestions.slice(0, 4).length ? (
-              <div className="miniSuggestions">
-                {suggestions.slice(0, 4).map((item) => (
-                  <article key={item.id}>
-                    <span>{item.status === 'approved' ? '已入库' : '待审核'}</span>
-                    <strong>{item.title}</strong>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <EmptyState text="暂无建议。" icon={ClipboardCheck} />
-            )}
-          </div>
-        </aside>
       </div>
     </section>
   );
@@ -1282,11 +1237,7 @@ function CustomerPage({ onRefresh }: { onRefresh: () => Promise<void> }) {
 
   return (
     <section className="workspacePage">
-      <PageHeader
-        eyebrow="Customer Service"
-        title="智能客服"
-        description="客户侧 RAG 问答，展示意图识别、检索命中、置信度和转人工摘要。"
-      />
+      <PageHeader title="智能客服" />
 
       <div className="customerLayout">
         <section className="panel chatPanel flat">
@@ -1444,6 +1395,7 @@ function KnowledgePage({
   qaItems,
   products,
   onApprove,
+  onDeleteSuggestion,
   onCreateQa,
   onCreateProducts,
   onDeleteQa,
@@ -1453,6 +1405,7 @@ function KnowledgePage({
   qaItems: QaKnowledge[];
   products: ProductKnowledge[];
   onApprove: (id: string) => Promise<void>;
+  onDeleteSuggestion: (id: string) => Promise<void>;
   onCreateQa: (items: Array<{ question: string; answer: string; tags: string[] }>) => Promise<void>;
   onDeleteQa: (id: string) => Promise<void>;
   onCreateProducts: (items: Array<{
@@ -1487,7 +1440,21 @@ function KnowledgePage({
   const [deletingId, setDeletingId] = useState('');
   const [creatingTarget, setCreatingTarget] = useState<'qa' | 'qaBatch' | 'product' | 'productBatch' | ''>('');
   const visibleQa = qaItems.filter((item) => item.type !== 'product');
+  const pendingSuggestions = suggestions.filter((item) => item.status !== 'approved');
+  const [expandedSuggestionIds, setExpandedSuggestionIds] = useState<Set<string>>(() => new Set());
   const parseTags = (value: string) => value.split(/[,，、]/).map((tag) => tag.trim()).filter(Boolean);
+
+  function toggleSuggestion(id: string) {
+    setExpandedSuggestionIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
 
   async function submitQa() {
     if (creatingTarget) {
@@ -1657,17 +1624,33 @@ function KnowledgePage({
     }
   }
 
+  async function deleteSuggestionItem(item: KnowledgeSuggestion) {
+    const label = item.status === 'approved' ? '已入库建议记录' : '待审核建议';
+    const suffix = item.status === 'approved' ? '这只会移除建议记录，不会删除已入库的正式问答。' : '';
+    if (!window.confirm(`确定删除${label}“${item.title}”吗？${suffix}`)) {
+      return;
+    }
+
+    setDeletingId(item.id);
+    try {
+      await onDeleteSuggestion(item.id);
+      setLibraryNotice(`已删除${label}。`);
+    } catch {
+      setLibraryNotice('删除待审核问答失败，请稍后重试。');
+    } finally {
+      setDeletingId('');
+    }
+  }
+
   return (
     <section className="workspacePage">
       <PageHeader
-        eyebrow="Knowledge Base"
         title="知识库"
-        description="客服 RAG 使用两个业务库：问答库负责标准问答和标签，商品库负责商品结构化信息。"
         action={
           <div className="headerStats">
             <Stat label="问答库" value={`${visibleQa.length}`} />
             <Stat label="商品库" value={`${products.length}`} />
-            <Stat label="待审核" value={`${suggestions.filter((item) => item.status !== 'approved').length}`} />
+            <Stat label="待审核" value={`${pendingSuggestions.length}`} />
           </div>
         }
       />
@@ -1739,27 +1722,54 @@ function KnowledgePage({
               </div>
 
               <div className="suggestionStack">
-                {suggestions.length ? (
-                  suggestions.map((item) => (
-                    <article key={item.id} className={cx('suggestion', item.status)}>
+                {pendingSuggestions.length ? (
+                  pendingSuggestions.map((item) => {
+                    const expanded = expandedSuggestionIds.has(item.id);
+                    return (
+                    <article key={item.id} className={cx('suggestion', item.status, !expanded && 'collapsed')}>
                       <div className="suggestionHeader">
-                        <div>
-                          <span>{item.status === 'approved' ? '已入库' : '待审核'}</span>
+                        <button
+                          aria-expanded={expanded}
+                          aria-label={`${expanded ? '收起' : '展开'}待审核问答：${item.title}`}
+                          className="suggestionExpandButton"
+                          onClick={() => toggleSuggestion(item.id)}
+                          title={expanded ? '收起' : '展开'}
+                          type="button"
+                        >
+                          <ChevronRight size={14} className={expanded ? 'open' : ''} />
+                        </button>
+                        <div className="suggestionTitle">
+                          <span>待审核</span>
                           <strong>{item.title}</strong>
                         </div>
-                        {item.status !== 'approved' && (
+                        <div className="suggestionActions">
                           <button className="smallButton" onClick={() => onApprove(item.id)} type="button">
                             <FileText size={15} />
                             入库
                           </button>
-                        )}
+                          <button
+                            aria-label={`删除待审核问答：${item.title}`}
+                            className="iconButton danger"
+                            disabled={deletingId === item.id}
+                            onClick={() => deleteSuggestionItem(item)}
+                            title="删除建议"
+                            type="button"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
                       </div>
-                      <p>{item.content}</p>
-                      <small>{item.reason}</small>
+                      {expanded && (
+                        <div className="suggestionBody">
+                          <p>{item.content}</p>
+                          <small>{item.reason}</small>
+                        </div>
+                      )}
                     </article>
-                  ))
+                    );
+                  })
                 ) : (
-                  <EmptyState text="暂无知识建议。先到运营 Agent 中执行一次对话分析任务。" icon={ClipboardCheck} />
+                  <EmptyState text="暂无待审核问答。" icon={ClipboardCheck} />
                 )}
               </div>
             </div>
@@ -2056,9 +2066,7 @@ function SettingsPage() {
   return (
     <section className="workspacePage">
       <PageHeader
-        eyebrow="System Settings"
         title="系统设置"
-        description="维护店铺业务提示词与模型服务配置。提示词保存后立即用于运营 Agent 和智能客服。"
         action={
           <Stat
             label="联网搜索"
@@ -2373,9 +2381,7 @@ function ChannelsPage() {
   return (
     <section className="workspacePage">
       <PageHeader
-        eyebrow="Channel Integrations"
         title="渠道接入"
-        description="第一阶段接入企业微信「微信客服」文本消息：客户发消息后，ShopMate AI 自动回复，必要时提示人工跟进。"
         action={<Stat label="企业微信客服" value={settings?.enabled ? '已启用' : '未启用'} tone={settings?.enabled ? 'good' : 'warn'} />}
       />
 
@@ -2499,21 +2505,18 @@ function PlaceholderPage({
   suggestions: KnowledgeSuggestion[];
 }) {
   const content: Record<Exclude<WorkspaceTab, 'agent' | 'customer' | 'knowledge' | 'settings' | 'channels'>, {
-    eyebrow: string;
     title: string;
     description: string;
     icon: PhosphorIcon;
     actions: string[];
   }> = {
     analysis: {
-      eyebrow: 'Dialogue Analysis',
       title: '对话分析',
       description: '这里会承接 Agent 分析结果，展示高频问题、转人工原因、情绪分布和知识缺口。',
       icon: ChartDonut,
       actions: ['高频问题', '转人工原因', '情绪分类', '知识缺口']
     },
     reports: {
-      eyebrow: 'Reports',
       title: '运营报表',
       description: '这里会输出每日咨询量、自动回复率、转人工率、商品咨询排行和优化动作。',
       icon: PhosphorFileText,
@@ -2526,7 +2529,7 @@ function PlaceholderPage({
 
   return (
     <section className="workspacePage">
-      <PageHeader eyebrow={item.eyebrow} title={item.title} description={item.description} />
+      <PageHeader title={item.title} />
       <div className="placeholderPanel">
         <Icon size={30} weight="duotone" />
         <div>
@@ -2569,6 +2572,11 @@ export function App() {
 
   async function handleApprove(id: string) {
     await approveSuggestion(id);
+    await refreshMeta();
+  }
+
+  async function handleDeleteSuggestion(id: string) {
+    await deleteSuggestion(id);
     await refreshMeta();
   }
 
@@ -2667,6 +2675,7 @@ export function App() {
             qaItems={knowledgeItems}
             products={products}
             onApprove={handleApprove}
+            onDeleteSuggestion={handleDeleteSuggestion}
             onCreateQa={handleCreateQa}
             onCreateProducts={handleCreateProducts}
             onDeleteQa={handleDeleteQa}
