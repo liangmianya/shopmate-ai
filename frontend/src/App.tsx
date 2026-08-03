@@ -38,6 +38,7 @@ import type {
 } from '@phosphor-icons/react';
 import {
   AgentResponse,
+  AgentSkill,
   AgentToolResult,
   ChatResponse,
   ChatMessage,
@@ -57,6 +58,7 @@ import {
   deleteProduct,
   deleteSuggestion,
   loadEmbeddingSettings,
+  loadAgentSkills,
   loadKnowledge,
   loadLlmSettings,
   loadProducts,
@@ -877,15 +879,115 @@ function summarizeConfirmedTool(toolName: string, output: unknown) {
     : `已确认并删除 ${count} 条知识库条目${suffix}。`;
 }
 
+function skillIcon(skill: AgentSkill): PhosphorIcon {
+  if (skill.id.includes('data') || skill.tags.includes('分析')) {
+    return ChartDonut;
+  }
+
+  if (skill.id.includes('copy') || skill.tags.includes('文案')) {
+    return PhosphorFileText;
+  }
+
+  return Books;
+}
+
+function formatSkillPolicy(skill: AgentSkill) {
+  const preferred = skill.toolPolicy.preferred.length
+    ? `优先 ${skill.toolPolicy.preferred.length} 个工具`
+    : '按需选工具';
+  const resources = `${skill.resources.length} 个资源`;
+  const scripts = skill.scripts.some((script) => script.enabled)
+    ? '含脚本'
+    : skill.scripts.length
+      ? '脚本未启用'
+      : '无脚本';
+
+  return `${preferred} · ${resources} · ${skill.outputContract.format} · ${scripts}`;
+}
+
+function formatSkillContract(skill: AgentSkill) {
+  const sections = skill.outputContract.requiredSections.slice(0, 3).join(' / ');
+  return sections || '无固定输出段落';
+}
+
+function AgentSkillSidebar({
+  skills,
+  selectedSkillId,
+  onSelect
+}: {
+  skills: AgentSkill[];
+  selectedSkillId?: string;
+  onSelect: (id?: string) => void;
+}) {
+  const selectedSkill = skills.find((skill) => skill.id === selectedSkillId);
+
+  return (
+    <aside className="skillSidebar" aria-label="运营 Agent 技能">
+      <div className="skillPanel">
+        <div className="skillHeader">
+          <span>能力包</span>
+          <small>仅运营 Agent 使用</small>
+        </div>
+
+        <section className="skillCurrent">
+          <small>当前</small>
+          {selectedSkill ? (
+            <button className="skillCurrentCard active" onClick={() => onSelect(undefined)} type="button">
+              <span>
+                <strong>{selectedSkill.name}</strong>
+                <em>{formatSkillPolicy(selectedSkill)}</em>
+              </span>
+              <X size={14} />
+            </button>
+          ) : (
+            <div className="skillCurrentCard">
+              <span>
+                <strong>普通模式</strong>
+                <em>按任务自动选择工具</em>
+              </span>
+            </div>
+          )}
+        </section>
+
+        <section className="skillList">
+          <small>可用 Skill Package</small>
+          {skills.map((skill) => {
+            const Icon = skillIcon(skill);
+            const active = skill.id === selectedSkillId;
+            return (
+              <button
+                key={skill.id}
+                className={cx('skillCard', active && 'active')}
+                onClick={() => onSelect(active ? undefined : skill.id)}
+                type="button"
+              >
+                <Icon size={18} weight="duotone" />
+                <span>
+                  <strong>{skill.name}</strong>
+                  <em>{skill.description}</em>
+                  <small>{formatSkillPolicy(skill)}</small>
+                  <small>{formatSkillContract(skill)}</small>
+                </span>
+              </button>
+            );
+          })}
+        </section>
+      </div>
+    </aside>
+  );
+}
+
 function AgentPage({
   productCount,
   knowledgeCount,
   suggestions,
+  skills,
   onRefresh
 }: {
   productCount: number;
   knowledgeCount: number;
   suggestions: KnowledgeSuggestion[];
+  skills: AgentSkill[];
   onRefresh: () => Promise<void>;
 }) {
   const [input, setInput] = useState('');
@@ -893,7 +995,12 @@ function AgentPage({
   const [confirmingTool, setConfirmingTool] = useState(false);
   const [confirmationRequest, setConfirmationRequest] = useState<AgentConfirmationRequest>();
   const [runningAssistantId, setRunningAssistantId] = useState<string>();
+  const [selectedSkillId, setSelectedSkillId] = useState<string>();
   const abortControllerRef = useRef<AbortController | null>(null);
+  const selectedSkill = useMemo(
+    () => skills.find((skill) => skill.id === selectedSkillId),
+    [selectedSkillId, skills]
+  );
   const [messages, setMessages] = useState<AgentMessage[]>([
     {
       id: 'welcome',
@@ -982,7 +1089,7 @@ function AgentPage({
               : message
           )));
         }
-      }, { riskConfirmed: options.riskConfirmed });
+      }, { riskConfirmed: options.riskConfirmed, skillId: selectedSkill?.id });
       setMessages((current) => current.map((message) => (
         message.id === assistantId && message.role === 'assistant'
           ? {
@@ -1094,7 +1201,7 @@ function AgentPage({
               <textarea
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
-                placeholder="给运营 Agent 一个任务"
+                placeholder={selectedSkill?.inputPlaceholder || '给运营 Agent 一个任务'}
                 rows={4}
               />
               <div className="composerFooter">
@@ -1144,6 +1251,12 @@ function AgentPage({
             )}
           </div>
         </div>
+
+        <AgentSkillSidebar
+          skills={skills}
+          selectedSkillId={selectedSkill?.id}
+          onSelect={setSelectedSkillId}
+        />
       </div>
     </section>
   );
@@ -2556,18 +2669,21 @@ export function App() {
   const [suggestions, setSuggestions] = useState<KnowledgeSuggestion[]>([]);
   const [products, setProducts] = useState<ProductKnowledge[]>([]);
   const [knowledgeItems, setKnowledgeItems] = useState<QaKnowledge[]>([]);
+  const [agentSkills, setAgentSkills] = useState<AgentSkill[]>([]);
   const productCount = products.length;
   const knowledgeCount = knowledgeItems.length;
 
   async function refreshMeta() {
-    const [productData, knowledgeData, suggestionData] = await Promise.all([
+    const [productData, knowledgeData, suggestionData, skillData] = await Promise.all([
       loadProducts(),
       loadKnowledge(),
-      loadSuggestions()
+      loadSuggestions(),
+      loadAgentSkills()
     ]);
     setProducts(productData.products);
     setKnowledgeItems(knowledgeData.chunks);
     setSuggestions(suggestionData.suggestions);
+    setAgentSkills(skillData.skills);
   }
 
   async function handleApprove(id: string) {
@@ -2665,6 +2781,7 @@ export function App() {
             productCount={productCount}
             knowledgeCount={knowledgeCount}
             suggestions={suggestions}
+            skills={agentSkills}
             onRefresh={refreshMeta}
           />
         )}

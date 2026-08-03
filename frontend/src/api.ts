@@ -103,6 +103,44 @@ export type AgentResponse = {
   error?: string;
 };
 
+export type AgentSkill = {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  instructions: string;
+  whenToUse: string;
+  inputPlaceholder: string;
+  toolPolicy: {
+    preferred: string[];
+    required: string[];
+    forbidden: string[];
+  };
+  resources: Array<{
+    id: string;
+    title: string;
+    type: 'reference' | 'template' | 'checklist' | 'example';
+    description: string;
+    content: string;
+  }>;
+  outputContract: {
+    format: 'markdown' | 'table' | 'json' | 'mixed';
+    requiredSections: string[];
+    rules: string[];
+  };
+  scripts: Array<{
+    id: string;
+    name: string;
+    description: string;
+    command: string;
+    enabled: boolean;
+    risk: 'low' | 'medium' | 'high';
+  }>;
+  tags: string[];
+  source: 'builtin' | 'imported';
+  enabled: boolean;
+};
+
 export type LlmSettings = {
   baseUrl: string;
   model: string;
@@ -237,11 +275,22 @@ export async function sendChatStream(
   return final;
 }
 
-export function runAgentTask(input: string, signal?: AbortSignal, options: { riskConfirmed?: boolean } = {}) {
+export function loadAgentSkills() {
+  return request<{ skills: AgentSkill[] }>('/api/agent/skills');
+}
+
+export function saveAgentSkillPackage(input: Omit<AgentSkill, 'source'> & { source?: AgentSkill['source'] }) {
+  return request<{ skill: AgentSkill }>('/api/agent/skills', {
+    method: 'POST',
+    body: JSON.stringify(input)
+  });
+}
+
+export function runAgentTask(input: string, signal?: AbortSignal, options: { riskConfirmed?: boolean; skillId?: string } = {}) {
   return request<AgentResponse>('/api/agent/tasks', {
     method: 'POST',
     signal,
-    body: JSON.stringify({ input, riskConfirmed: options.riskConfirmed })
+    body: JSON.stringify({ input, riskConfirmed: options.riskConfirmed, skillId: options.skillId })
   });
 }
 
@@ -263,13 +312,13 @@ export async function runAgentTaskStream(
     onTrace?: (step: AgentTraceStep) => void;
     onTool?: (tool: AgentToolResult) => void;
   },
-  options: { riskConfirmed?: boolean } = {}
+  options: { riskConfirmed?: boolean; skillId?: string } = {}
 ) {
   const response = await fetch('/api/agent/tasks/stream', {
     method: 'POST',
     signal,
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ input, riskConfirmed: options.riskConfirmed })
+    body: JSON.stringify({ input, riskConfirmed: options.riskConfirmed, skillId: options.skillId })
   });
 
   if (!response.ok || !response.body) {

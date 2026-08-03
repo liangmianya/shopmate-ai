@@ -102,6 +102,26 @@ export function migrate() {
       updated_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS agent_skills (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      package_version TEXT DEFAULT '1.0.0',
+      instructions TEXT NOT NULL,
+      when_to_use TEXT,
+      input_placeholder TEXT,
+      tools TEXT,
+      tool_policy TEXT,
+      resources TEXT,
+      output_contract TEXT,
+      scripts TEXT,
+      tags TEXT,
+      source TEXT NOT NULL DEFAULT 'builtin',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS knowledge_embeddings (
       chunk_id TEXT PRIMARY KEY,
       model TEXT NOT NULL,
@@ -137,6 +157,18 @@ export function migrate() {
   if (!productColumns.some((column) => column.name === 'purchase_url')) {
     db.prepare('ALTER TABLE products ADD COLUMN purchase_url TEXT DEFAULT ""').run();
   }
+
+  const skillColumns = db.prepare('PRAGMA table_info(agent_skills)').all() as Array<{ name: string }>;
+  const ensureSkillColumn = (name: string, definition: string) => {
+    if (!skillColumns.some((column) => column.name === name)) {
+      db.prepare(`ALTER TABLE agent_skills ADD COLUMN ${definition}`).run();
+    }
+  };
+  ensureSkillColumn('package_version', "package_version TEXT DEFAULT '1.0.0'");
+  ensureSkillColumn('tool_policy', 'tool_policy TEXT');
+  ensureSkillColumn('resources', 'resources TEXT');
+  ensureSkillColumn('output_contract', 'output_contract TEXT');
+  ensureSkillColumn('scripts', 'scripts TEXT');
 }
 
 export function resetData() {
@@ -149,6 +181,7 @@ export function resetData() {
     DELETE FROM knowledge_chunks;
     DELETE FROM products;
     DELETE FROM app_settings;
+    DELETE FROM agent_skills;
     DELETE FROM knowledge_embeddings;
     DELETE FROM channel_messages;
     DELETE FROM channel_conversations;

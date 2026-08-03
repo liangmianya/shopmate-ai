@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { approveKnowledgeSuggestion, confirmHighRiskAgentTool, deleteKnowledgeSuggestion, listSuggestions, runAgentTask } from '../services/agentService.js';
+import { listAgentSkills, saveImportedAgentSkill } from '../services/skillService.js';
 
 const router = Router();
 
@@ -15,7 +16,11 @@ router.post('/tasks', async (req, res) => {
   req.on('aborted', abortTask);
   res.on('close', abortTask);
 
-  const schema = z.object({ input: z.string().min(1), riskConfirmed: z.boolean().optional() });
+  const schema = z.object({
+    input: z.string().min(1),
+    riskConfirmed: z.boolean().optional(),
+    skillId: z.string().min(1).optional()
+  });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
     req.off('aborted', abortTask);
@@ -26,7 +31,8 @@ router.post('/tasks', async (req, res) => {
 
   try {
     const result = await runAgentTask(parsed.data.input, controller.signal, undefined, {
-      riskConfirmed: parsed.data.riskConfirmed
+      riskConfirmed: parsed.data.riskConfirmed,
+      skillId: parsed.data.skillId
     });
     if (!controller.signal.aborted && !res.headersSent) {
       res.json(result);
@@ -52,7 +58,11 @@ router.post('/tasks/stream', async (req, res) => {
   req.on('aborted', abortTask);
   res.on('close', abortTask);
 
-  const schema = z.object({ input: z.string().min(1), riskConfirmed: z.boolean().optional() });
+  const schema = z.object({
+    input: z.string().min(1),
+    riskConfirmed: z.boolean().optional(),
+    skillId: z.string().min(1).optional()
+  });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
     req.off('aborted', abortTask);
@@ -95,7 +105,8 @@ router.post('/tasks/stream', async (req, res) => {
       onTrace: (step) => send('trace', step),
       onToolResult: (toolResult) => send('tool', toolResult)
     }, {
-      riskConfirmed: parsed.data.riskConfirmed
+      riskConfirmed: parsed.data.riskConfirmed,
+      skillId: parsed.data.skillId
     });
 
     sendSummaryIfNeeded(result.summary);
@@ -113,6 +124,68 @@ router.post('/tasks/stream', async (req, res) => {
 
 router.get('/suggestions', (_req, res) => {
   res.json({ suggestions: listSuggestions() });
+});
+
+router.get('/skills', (_req, res) => {
+  res.json({ skills: listAgentSkills() });
+});
+
+router.post('/skills', (req, res) => {
+  const toolPolicySchema = z.object({
+    preferred: z.array(z.string().min(1)).default([]),
+    required: z.array(z.string().min(1)).default([]),
+    forbidden: z.array(z.string().min(1)).default([])
+  }).default({ preferred: [], required: [], forbidden: [] });
+
+  const resourceSchema = z.object({
+    id: z.string().min(1),
+    title: z.string().min(1),
+    type: z.enum(['reference', 'template', 'checklist', 'example']),
+    description: z.string().default(''),
+    content: z.string().default('')
+  });
+
+  const outputContractSchema = z.object({
+    format: z.enum(['markdown', 'table', 'json', 'mixed']).default('markdown'),
+    requiredSections: z.array(z.string().min(1)).default([]),
+    rules: z.array(z.string().min(1)).default([])
+  }).default({
+    format: 'markdown',
+    requiredSections: [],
+    rules: []
+  });
+
+  const scriptSchema = z.object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    description: z.string().default(''),
+    command: z.string().default(''),
+    enabled: z.boolean().default(false),
+    risk: z.enum(['low', 'medium', 'high']).default('medium')
+  });
+
+  const schema = z.object({
+    id: z.string().min(1).max(120).regex(/^[a-zA-Z0-9_-]+$/),
+    name: z.string().min(1).max(80),
+    description: z.string().min(1).max(300),
+    version: z.string().min(1).max(40).optional(),
+    instructions: z.string().min(1).max(12000),
+    whenToUse: z.string().max(1000).optional(),
+    inputPlaceholder: z.string().max(200).optional(),
+    toolPolicy: toolPolicySchema.optional(),
+    resources: z.array(resourceSchema).max(20).optional(),
+    outputContract: outputContractSchema.optional(),
+    scripts: z.array(scriptSchema).max(20).optional(),
+    tags: z.array(z.string().min(1).max(24)).max(10).optional(),
+    enabled: z.boolean().optional()
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  res.json({ skill: saveImportedAgentSkill(parsed.data) });
 });
 
 router.post('/suggestions/:id/approve', (req, res) => {

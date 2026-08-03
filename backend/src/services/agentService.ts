@@ -7,6 +7,7 @@ import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { db } from '../db/database.js';
 import { getLlmSettings, getSystemPromptSettings } from './settingsService.js';
+import { getAgentSkill, type AgentSkill } from './skillService.js';
 import type { AgentToolResult, AgentTraceStep } from '../types.js';
 
 const execFileAsync = promisify(execFile);
@@ -53,6 +54,7 @@ type AgentTaskEvents = {
 
 type AgentTaskOptions = {
   riskConfirmed?: boolean;
+  skillId?: string;
 };
 
 type OperationAnalysis = {
@@ -91,6 +93,7 @@ const AgentState = Annotation.Root({
   }),
   finalAnswer: Annotation<string>(),
   error: Annotation<string>(),
+  skill: Annotation<AgentSkill | undefined>(),
   riskConfirmed: Annotation<boolean>(),
   abortSignal: Annotation<AbortSignal | undefined>(),
   events: Annotation<AgentTaskEvents | undefined>()
@@ -386,6 +389,15 @@ const toolSchemas = [...rawToolSchemas].sort((left, right) => {
   const rightIndex = toolOrder.indexOf(right.function.name);
   return (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex) - (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex);
 });
+
+function getToolSchemasForSkill(skill: AgentSkill | undefined) {
+  if (!skill?.toolPolicy.forbidden.length) {
+    return toolSchemas;
+  }
+
+  const forbidden = new Set(skill.toolPolicy.forbidden);
+  return toolSchemas.filter((tool) => !forbidden.has(tool.function.name));
+}
 
 function truncateOutput(value: string) {
   return value.length > maxToolOutputLength
@@ -904,8 +916,22 @@ function createKnowledgeSuggestion(rawArgs: Record<string, unknown>) {
   };
 }
 
-async function executeTool(name: string, args: Record<string, unknown>, signal?: AbortSignal, riskConfirmed = false) {
+function isForbiddenBySkill(skill: AgentSkill | undefined, toolName: string) {
+  return Boolean(skill?.toolPolicy.forbidden.includes(toolName));
+}
+
+async function executeTool(
+  name: string,
+  args: Record<string, unknown>,
+  signal?: AbortSignal,
+  riskConfirmed = false,
+  skill?: AgentSkill
+) {
   throwIfAborted(signal);
+  if (isForbiddenBySkill(skill, name)) {
+    throw new Error(`当前 Skill「${skill?.name}」的工具策略禁止调用 ${name}。`);
+  }
+
   if (name === 'run_shell_command') {
     return runShellCommand(args, signal);
   }
@@ -941,8 +967,71 @@ async function executeTool(name: string, args: Record<string, unknown>, signal?:
   throw new Error(`Unknown tool: ${name}`);
 }
 
-function buildSystemPrompt() {
+function buildSkillPrompt(skill: AgentSkill | undefined) {
+  if (!skill) {
+    return '';
+  }
+
+  const toolPolicy = [
+    skill.toolPolicy.preferred.length ? `优先工具：${skill.toolPolicy.preferred.join('、')}` : '优先工具：无',
+    skill.toolPolicy.required.length ? `必要工具：${skill.toolPolicy.required.join('、')}` : '必要工具：无',
+    skill.toolPolicy.forbidden.length ? `禁用工具：${skill.toolPolicy.forbidden.join('、')}` : '禁用工具：无'
+  ].join('\n');
+
+  const resources = skill.resources.length
+    ? skill.resources.map((resource, index) => [
+        `资源 ${index + 1}：${resource.title}`,
+        `类型：${resource.type}`,
+        `说明：${resource.description}`,
+        resource.content
+      ].join('\n')).join('\n\n')
+    : '无';
+
+  const outputContract = [
+    `输出格式：${skill.outputContract.format}`,
+    skill.outputContract.requiredSections.length
+      ? `必须包含的部分：${skill.outputContract.requiredSections.join('、')}`
+      : '必须包含的部分：无固定要求',
+    skill.outputContract.rules.length
+      ? `输出规则：\n${skill.outputContract.rules.map((rule, index) => `${index + 1}. ${rule}`).join('\n')}`
+      : ''
+  ].filter(Boolean).join('\n');
+
+  const scripts = skill.scripts.length
+    ? skill.scripts.map((script) => [
+        `${script.name}（${script.enabled ? '可用' : '暂未启用'}，风险：${script.risk}）`,
+        `说明：${script.description}`,
+        `命令：${script.command || '未配置'}`
+      ].join('\n')).join('\n\n')
+    : '无';
+
+  return [
+    '当前启用一个运营 Agent Skill Package。Skill 是可加载的任务能力包，不只是提示词片段。',
+    '它由 Instructions、Resources、Tool Policy、Output Contract 和可选 Scripts 组成。',
+    'Skill 不会覆盖系统安全规则、工具级确认规则或店主业务配置；冲突时必须服从更高优先级规则。',
+    `Skill 名称：${skill.name}`,
+    `Skill 版本：${skill.version}`,
+    `Skill 描述：${skill.description}`,
+    skill.whenToUse ? `适用场景：${skill.whenToUse}` : '',
+    skill.tags.length ? `标签：${skill.tags.join('、')}` : '',
+    'Tool Policy：',
+    toolPolicy,
+    'Instructions：',
+    skill.instructions,
+    'Resources：',
+    resources,
+    'Output Contract：',
+    outputContract,
+    'Optional Scripts：',
+    scripts,
+    'Scripts 目前只作为能力包声明和执行意图参考，不能直接绕过正式工具或安全规则执行。',
+    '不要为了使用 Skill 而读取无关数据或调用无关工具；工具策略中的 forbidden 工具不得调用。'
+  ].filter(Boolean).join('\n');
+}
+
+function buildSystemPrompt(skill?: AgentSkill) {
   const businessPrompt = getSystemPromptSettings().prompt;
+  const skillPrompt = buildSkillPrompt(skill);
   const toolProtocol = [
     '如果当前模型或供应商没有产出原生 tool_calls，你只能在确实需要工具时，用下面的 JSON action 协议表达下一步，且不要包 Markdown：',
     '{"action":"tool","tool":"create_product","args":{"name":"商品名","brand":"品牌","category":"商品类型","price":99,"stock":10,"features":"核心卖点","purchaseUrl":""}}',
@@ -959,6 +1048,7 @@ function buildSystemPrompt() {
     '你是 ShopMate AI 的通用电商运营 Agent，负责按用户当前指令完成商品库维护、知识库维护、客服运营分析、日报草稿和轻量自动化。',
     '以下是店主配置的业务系统提示词。将其作为业务角色与服务范围的依据；固定的工具、安全和输出规则仍须遵守：',
     businessPrompt,
+    skillPrompt,
     '核心原则：按需调用工具。不要因为系统里有工具就默认读取客服对话、默认分析运营数据、默认生成知识库草稿。',
     '如果用户只是咨询能力、询问流程、要求解释概念、要求改写文案、或任务可直接回答，应直接 final，不要调用工具。',
     '只有用户明确要求分析客服对话、服务数据、转人工原因、日报、高频问题、情绪、知识缺口时，才调用 query_operation_data。',
@@ -1177,7 +1267,7 @@ function buildGenericToolSummary(results: AgentToolResult[]) {
   ].join('\n');
 }
 
-async function callAgentModel(messages: AgentMessage[], signal?: AbortSignal, onChunk?: (chunk: string) => void) {
+async function callAgentModel(messages: AgentMessage[], signal?: AbortSignal, onChunk?: (chunk: string) => void, skill?: AgentSkill) {
   throwIfAborted(signal);
   const { apiKey, baseUrl, model } = getLlmSettings();
   if (!apiKey) {
@@ -1198,7 +1288,7 @@ async function callAgentModel(messages: AgentMessage[], signal?: AbortSignal, on
       temperature: 0.2,
       stream: true,
       messages,
-      tools: toolSchemas,
+      tools: getToolSchemasForSkill(skill),
       tool_choice: 'auto'
     })
   }).finally(runSignal.cleanup);
@@ -1293,7 +1383,7 @@ async function agentNode(state: typeof AgentState.State) {
   const bootstrapMessages = state.messages.length
     ? []
     : [
-        { role: 'system' as const, content: buildSystemPrompt() },
+        { role: 'system' as const, content: buildSystemPrompt(state.skill) },
         { role: 'user' as const, content: state.input }
       ];
 
@@ -1302,7 +1392,8 @@ async function agentNode(state: typeof AgentState.State) {
     modelMessage = await callAgentModel(
       [...state.messages, ...bootstrapMessages],
       state.abortSignal,
-      state.events?.onChunk
+      state.events?.onChunk,
+      state.skill
     );
   } catch (error) {
     if (isAbortError(error) || state.abortSignal?.aborted) {
@@ -1378,7 +1469,7 @@ async function toolsNode(state: typeof AgentState.State) {
     let status: 'success' | 'error' = 'success';
 
     try {
-      output = await executeTool(call.name, call.args, state.abortSignal, state.riskConfirmed);
+      output = await executeTool(call.name, call.args, state.abortSignal, state.riskConfirmed, state.skill);
     } catch (error) {
       if (isAbortError(error) || state.abortSignal?.aborted) {
         throw error;
@@ -1481,13 +1572,18 @@ function buildResultFromState(state: typeof AgentState.State) {
 export async function runAgentTask(input: string, signal?: AbortSignal, events?: AgentTaskEvents, options: AgentTaskOptions = {}) {
   const taskId = nanoid();
   const createdAt = now();
-  const startTrace: AgentTraceStep = { label: 'LangGraph 启动', detail: '进入通用运营 Agent 工具循环。', status: 'done' };
+  const skill = getAgentSkill(options.skillId);
+  const startTrace: AgentTraceStep = {
+    label: 'LangGraph 启动',
+    detail: skill ? `进入通用运营 Agent 工具循环，当前 Skill：${skill.name}。` : '进入通用运营 Agent 工具循环。',
+    status: 'done'
+  };
   events?.onTrace?.(startTrace);
 
   db.prepare(`
     INSERT INTO agent_tasks (id, user_input, intent, skill, status, result, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(taskId, input, 'operation_task', 'langgraph_general_agent', 'running', '', createdAt, createdAt);
+  `).run(taskId, input, 'operation_task', skill?.id ?? 'langgraph_general_agent', 'running', '', createdAt, createdAt);
 
   try {
     const finalState = await agentGraph.invoke({
@@ -1500,6 +1596,7 @@ export async function runAgentTask(input: string, signal?: AbortSignal, events?:
       trace: [startTrace],
       finalAnswer: '',
       error: '',
+      skill,
       riskConfirmed: Boolean(options.riskConfirmed),
       abortSignal: signal,
       events
