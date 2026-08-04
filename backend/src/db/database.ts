@@ -115,6 +115,10 @@ export function migrate() {
       resources TEXT,
       output_contract TEXT,
       scripts TEXT,
+      package_kind TEXT DEFAULT 'database',
+      entry_file TEXT,
+      package_dir TEXT,
+      source_url TEXT,
       tags TEXT,
       source TEXT NOT NULL DEFAULT 'builtin',
       enabled INTEGER NOT NULL DEFAULT 1,
@@ -169,6 +173,10 @@ export function migrate() {
   ensureSkillColumn('resources', 'resources TEXT');
   ensureSkillColumn('output_contract', 'output_contract TEXT');
   ensureSkillColumn('scripts', 'scripts TEXT');
+  ensureSkillColumn('package_kind', "package_kind TEXT DEFAULT 'database'");
+  ensureSkillColumn('entry_file', 'entry_file TEXT');
+  ensureSkillColumn('package_dir', 'package_dir TEXT');
+  ensureSkillColumn('source_url', 'source_url TEXT');
 }
 
 export function resetData() {

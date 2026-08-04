@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowLeft,
   Archive,
   Bot,
   Check,
@@ -19,6 +20,7 @@ import {
   Send,
   Settings2,
   Trash2,
+  Upload,
   Wrench,
   X
 } from 'lucide-react';
@@ -29,9 +31,11 @@ import {
   ChatsCircle,
   FileText as PhosphorFileText,
   GearSix,
+  Moon,
   PaperPlaneTilt,
   Robot,
-  ShareNetwork
+  ShareNetwork,
+  Sun
 } from '@phosphor-icons/react';
 import type {
   Icon as PhosphorIcon
@@ -77,11 +81,16 @@ import {
 } from './api';
 import shopmateLogo from './assets/shopmate-logo.png';
 import katex from 'katex';
+import JSZip from 'jszip';
 import 'katex/dist/katex.min.css';
 
 type WorkspaceTab = 'agent' | 'customer' | 'knowledge' | 'settings' | 'channels' | 'analysis' | 'reports';
 
 type Message = ChatMessage;
+
+type ThemeMode = 'light' | 'dark';
+
+type AgentSubview = 'chat' | 'skills';
 
 type EvidenceFilter = 'all' | 'knowledge' | 'web';
 
@@ -522,40 +531,76 @@ function compactToolOutput(value: unknown, limit = 1200) {
   return raw.length > limit ? `${raw.slice(0, limit)}\n...已截断 ${raw.length - limit} 字符` : raw;
 }
 
-type AgentKnowledgeReference = {
+type AgentReference = {
   id: string;
+  kind: 'knowledge' | 'web';
   title: string;
   content: string;
   source?: string;
   type?: string;
+  url?: string;
 };
 
-function isKnowledgeReference(value: unknown): value is AgentKnowledgeReference {
+function isKnowledgeReference(value: unknown): value is AgentReference {
   if (!value || typeof value !== 'object') {
     return false;
   }
-  const item = value as Partial<AgentKnowledgeReference>;
+  const item = value as Partial<AgentReference>;
   return typeof item.id === 'string' && typeof item.title === 'string' && typeof item.content === 'string';
 }
 
-function collectAgentKnowledgeReferences(result?: AgentResponse) {
-  const references = new Map<string, AgentKnowledgeReference>();
+function isWebSourceReference(value: unknown): value is {
+  title: string;
+  url: string;
+  snippet?: string;
+  summary?: string;
+  siteName?: string;
+  datePublished?: string;
+} {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const item = value as { title?: unknown; url?: unknown };
+  return typeof item.title === 'string' && typeof item.url === 'string';
+}
+
+function collectAgentReferences(result?: AgentResponse) {
+  const references = new Map<string, AgentReference>();
 
   for (const tool of result?.toolResults ?? []) {
-    if (tool.toolName !== 'search_knowledge_entries' || tool.status !== 'success') {
+    if (tool.status !== 'success') {
       continue;
     }
 
-    const output = tool.output as unknown;
-    const candidates = Array.isArray(output)
-      ? output
-      : output && typeof output === 'object' && Array.isArray((output as { matches?: unknown[] }).matches)
-        ? (output as { matches: unknown[] }).matches
-        : [];
+    if (tool.toolName === 'search_knowledge_entries') {
+      const output = tool.output as unknown;
+      const candidates = Array.isArray(output)
+        ? output
+        : output && typeof output === 'object' && Array.isArray((output as { matches?: unknown[] }).matches)
+          ? (output as { matches: unknown[] }).matches
+          : [];
 
-    for (const item of candidates) {
-      if (isKnowledgeReference(item)) {
-        references.set(item.id, item);
+      for (const item of candidates) {
+        if (isKnowledgeReference(item)) {
+          references.set(`knowledge:${item.id}`, { ...item, kind: 'knowledge' });
+        }
+      }
+    }
+
+    if (tool.toolName === 'search_public_web') {
+      const output = tool.output as { sources?: unknown[] };
+      for (const item of output.sources ?? []) {
+        if (isWebSourceReference(item)) {
+          references.set(`web:${item.url}`, {
+            id: item.url,
+            kind: 'web',
+            title: item.title,
+            content: item.summary || item.snippet || item.url,
+            source: item.siteName || getHost(item.url),
+            type: item.datePublished ? `联网 · ${item.datePublished}` : '联网',
+            url: item.url
+          });
+        }
       }
     }
   }
@@ -760,7 +805,7 @@ function AgentExecutionPanel({
   );
 }
 
-function AgentReferences({ references }: { references: AgentKnowledgeReference[] }) {
+function AgentReferences({ references }: { references: AgentReference[] }) {
   if (!references.length) {
     return null;
   }
@@ -769,16 +814,28 @@ function AgentReferences({ references }: { references: AgentKnowledgeReference[]
     <section className="agentReferences">
       <div className="agentReferencesTitle">
         <Database size={14} />
-        <strong>知识库引用</strong>
+        <strong>引用来源</strong>
       </div>
       <div className="agentReferenceList">
-        {references.slice(0, 6).map((item) => (
-          <article key={item.id}>
-            <span>{item.type || '知识库'}{item.source ? ` · ${item.source}` : ''}</span>
-            <strong>{item.title}</strong>
-            <p>{compactText(item.content, 140)}</p>
-          </article>
-        ))}
+        {references.slice(0, 6).map((item) => {
+          const content = (
+            <>
+              <span>{item.type || (item.kind === 'web' ? '联网' : '知识库')}{item.source ? ` · ${item.source}` : ''}</span>
+              <strong>{item.title}</strong>
+              <p>{compactText(item.content, 140)}</p>
+            </>
+          );
+
+          return item.url ? (
+            <a key={item.id} href={item.url} target="_blank" rel="noreferrer">
+              {content}
+            </a>
+          ) : (
+            <article key={item.id}>
+              {content}
+            </article>
+          );
+        })}
       </div>
     </section>
   );
@@ -793,7 +850,7 @@ function AgentAssistantMessage({ result, content, isRunning }: { result?: AgentR
     );
   }
 
-  const references = collectAgentKnowledgeReferences(result);
+  const references = collectAgentReferences(result);
 
   return (
     <div className="agentResponse">
@@ -905,28 +962,123 @@ function formatSkillPolicy(skill: AgentSkill) {
   return `${preferred} · ${resources} · ${skill.outputContract.format} · ${scripts}`;
 }
 
+function formatSkillSource(skill: AgentSkill) {
+  if (skill.source === 'github') {
+    return `GitHub · ${skill.entryFile || 'SKILL.md'}`;
+  }
+  if (skill.packageKind === 'filesystem') {
+    return `本地包 · ${skill.entryFile || 'SKILL.md'}`;
+  }
+  return skill.source === 'imported' ? '导入包' : '内置包';
+}
+
 function formatSkillContract(skill: AgentSkill) {
   const sections = skill.outputContract.requiredSections.slice(0, 3).join(' / ');
   return sections || '无固定输出段落';
 }
 
+function createSkillImportId(fileName: string) {
+  const normalized = fileName
+    .replace(/\.(md|zip)$/i, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+  return `imported-${normalized || 'skill'}-${Date.now().toString(36)}`;
+}
+
+function findSkillMarkdownSection(markdown: string, heading: RegExp) {
+  const lines = markdown.split(/\r?\n/);
+  const start = lines.findIndex((line) => heading.test(line.trim()));
+  if (start < 0) {
+    return '';
+  }
+
+  const section: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^#{1,2}\s+/.test(line.trim())) {
+      break;
+    }
+    section.push(line);
+  }
+  return section.join('\n').trim();
+}
+
+function parseSkillMarkdown(markdown: string, fileName: string): AgentSkill {
+  const title = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim();
+  const yamlName = markdown.match(/^name:\s*["']?(.+?)["']?\s*$/mi)?.[1]?.trim();
+  const yamlDescription = markdown.match(/^description:\s*["']?(.+?)["']?\s*$/mi)?.[1]?.trim();
+  const firstParagraph = markdown
+    .split(/\r?\n/)
+    .find((line) => line.trim() && !line.trim().startsWith('#') && !line.trim().startsWith('---') && !line.includes(':'))
+    ?.trim();
+  const name = yamlName || title || fileName.replace(/\.(md|zip)$/i, '');
+  const description = yamlDescription || firstParagraph || '从本地文件导入的运营 Agent Skill。';
+  const whenToUse = findSkillMarkdownSection(markdown, /^#{1,2}\s+(when to use|适用场景|何时使用)/i);
+
+  return {
+    id: createSkillImportId(fileName),
+    name,
+    description: compactText(description, 300),
+    version: '1.0.0',
+    instructions: markdown,
+    whenToUse,
+    inputPlaceholder: `使用${name}完成一个任务`,
+    toolPolicy: { preferred: [], required: [], forbidden: [] },
+    resources: [],
+    outputContract: { format: 'markdown', requiredSections: [], rules: [] },
+    scripts: [],
+    tags: ['导入'],
+    source: 'imported',
+    sourceUrl: '',
+    packageKind: 'database',
+    entryFile: fileName,
+    packageDir: '',
+    enabled: true
+  };
+}
+
+async function readSkillImport(file: File) {
+  if (/\.md$/i.test(file.name)) {
+    return parseSkillMarkdown(await file.text(), file.name);
+  }
+
+  if (/\.zip$/i.test(file.name)) {
+    const archive = await JSZip.loadAsync(file);
+    const entries = Object.values(archive.files).filter((entry) => !entry.dir);
+    const skillFile = entries.find((entry) => /(^|\/)SKILL\.md$/i.test(entry.name))
+      ?? entries.find((entry) => /\.md$/i.test(entry.name));
+    if (!skillFile) {
+      throw new Error('压缩包中没有找到 SKILL.md 或 Markdown 文件。');
+    }
+    return parseSkillMarkdown(await skillFile.async('string'), skillFile.name);
+  }
+
+  throw new Error('请选择 .md 或 .zip 格式的 Skill 文件。');
+}
+
 function AgentSkillSidebar({
   skills,
   selectedSkillId,
-  onSelect
+  onSelect,
+  onOpenManager
 }: {
   skills: AgentSkill[];
   selectedSkillId?: string;
   onSelect: (id?: string) => void;
+  onOpenManager: () => void;
 }) {
   const selectedSkill = skills.find((skill) => skill.id === selectedSkillId);
+  const previewSkills = skills.slice(0, 3);
 
   return (
     <aside className="skillSidebar" aria-label="运营 Agent 技能">
       <div className="skillPanel">
         <div className="skillHeader">
           <span>能力包</span>
-          <small>仅运营 Agent 使用</small>
+          <button className="skillManageButton" onClick={onOpenManager} type="button">
+            <Settings2 size={14} />
+            管理技能
+          </button>
         </div>
 
         <section className="skillCurrent">
@@ -935,6 +1087,7 @@ function AgentSkillSidebar({
             <button className="skillCurrentCard active" onClick={() => onSelect(undefined)} type="button">
               <span>
                 <strong>{selectedSkill.name}</strong>
+                <em>{formatSkillSource(selectedSkill)}</em>
                 <em>{formatSkillPolicy(selectedSkill)}</em>
               </span>
               <X size={14} />
@@ -950,8 +1103,8 @@ function AgentSkillSidebar({
         </section>
 
         <section className="skillList">
-          <small>可用 Skill Package</small>
-          {skills.map((skill) => {
+          <small>可用技能库 · {skills.length}</small>
+          {previewSkills.map((skill) => {
             const Icon = skillIcon(skill);
             const active = skill.id === selectedSkillId;
             return (
@@ -964,16 +1117,210 @@ function AgentSkillSidebar({
                 <Icon size={18} weight="duotone" />
                 <span>
                   <strong>{skill.name}</strong>
-                  <em>{skill.description}</em>
-                  <small>{formatSkillPolicy(skill)}</small>
-                  <small>{formatSkillContract(skill)}</small>
+                  <em>{compactText(skill.description, 58)}</em>
                 </span>
               </button>
             );
           })}
+          {skills.length > previewSkills.length && (
+            <button className="skillMoreButton" onClick={onOpenManager} type="button">
+              查看全部 {skills.length} 个技能
+              <ChevronRight size={15} />
+            </button>
+          )}
         </section>
       </div>
     </aside>
+  );
+}
+
+function AgentSkillManager({
+  skills,
+  selectedSkillId,
+  onSelect,
+  onBack,
+  onToggle,
+  onDelete,
+  onUpdate,
+  onImport,
+  onUseInConversation
+}: {
+  skills: AgentSkill[];
+  selectedSkillId?: string;
+  onSelect: (id: string) => void;
+  onBack: () => void;
+  onToggle: (id: string) => void;
+  onDelete: (id: string) => void;
+  onUpdate: (skill: AgentSkill) => void;
+  onImport: (file: File) => Promise<void>;
+  onUseInConversation: (id: string) => void;
+}) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const selectedSkill = skills.find((skill) => skill.id === selectedSkillId) ?? skills[0];
+  const [editing, setEditing] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [draftPlaceholder, setDraftPlaceholder] = useState('');
+  const [draftInstructions, setDraftInstructions] = useState('');
+
+  useEffect(() => {
+    if (!selectedSkill) {
+      return;
+    }
+    setDraftPlaceholder(selectedSkill.inputPlaceholder);
+    setDraftInstructions(selectedSkill.instructions);
+    setEditing(false);
+  }, [selectedSkill?.id]);
+
+  async function handleImport(file?: File) {
+    if (!file) {
+      return;
+    }
+    setImporting(true);
+    setNotice('');
+    try {
+      await onImport(file);
+      setNotice(`已导入 ${file.name}，仅在当前浏览器会话中可用。`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '导入失败，请检查文件格式。');
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  }
+
+  return (
+    <section className="workspacePage skillManagerWorkspace">
+      <PageHeader
+        title="技能管理"
+        action={
+          <button className="ghostButton skillBackButton" onClick={onBack} type="button">
+            <ArrowLeft size={16} />
+            返回对话
+          </button>
+        }
+      />
+
+      <div className="skillManagerToolbar">
+        <div>
+          <span>运营 Agent</span>
+          <p>管理当前会话可用的能力包。</p>
+        </div>
+        <input
+          ref={fileInputRef}
+          accept=".md,.zip,text/markdown,application/zip,application/x-zip-compressed"
+          className="skillImportInput"
+          onChange={(event) => handleImport(event.target.files?.[0])}
+          type="file"
+        />
+        <button className="primaryButton" disabled={importing} onClick={() => fileInputRef.current?.click()} type="button">
+          <Upload size={16} />
+          {importing ? '正在导入' : '导入 Skill'}
+        </button>
+      </div>
+
+      {notice && <div className="skillNotice">{notice}</div>}
+
+      <div className="skillManagerLayout">
+        <section className="skillCatalog" aria-label="可用技能库">
+          <div className="skillCatalogHeader">
+            <h2>可用技能库</h2>
+            <span>{skills.length} 个</span>
+          </div>
+          <div className="skillCatalogList">
+            {skills.length ? skills.map((skill) => {
+              const Icon = skillIcon(skill);
+              const active = skill.id === selectedSkill?.id;
+              return (
+                <button className={cx('skillCatalogItem', active && 'active')} key={skill.id} onClick={() => onSelect(skill.id)} type="button">
+                  <Icon size={18} weight="duotone" />
+                  <span>
+                    <strong>{skill.name}</strong>
+                    <small>{formatSkillSource(skill)}</small>
+                  </span>
+                  <i>{skill.enabled ? '已启用' : '已关闭'}</i>
+                </button>
+              );
+            }) : <EmptyState text="当前没有可用 Skill" icon={Books} />}
+          </div>
+        </section>
+
+        {selectedSkill && (
+          <section className="skillDetail">
+            <div className="skillDetailHeading">
+              <div>
+                <span>{formatSkillSource(selectedSkill)}</span>
+                <h2>{selectedSkill.name}</h2>
+                <p>{selectedSkill.description}</p>
+              </div>
+              <button
+                aria-checked={selectedSkill.enabled}
+                className={cx('skillSwitch', selectedSkill.enabled && 'active')}
+                onClick={() => onToggle(selectedSkill.id)}
+                role="switch"
+                type="button"
+              >
+                <i />
+                {selectedSkill.enabled ? '已启用' : '已关闭'}
+              </button>
+            </div>
+
+            <div className="skillDetailMeta">
+              <div><span>适用场景</span><strong>{selectedSkill.whenToUse || '按任务自动匹配'}</strong></div>
+              <div><span>工具策略</span><strong>{formatSkillPolicy(selectedSkill)}</strong></div>
+              <div><span>输出约束</span><strong>{formatSkillContract(selectedSkill)}</strong></div>
+            </div>
+
+            {editing ? (
+              <div className="skillConfigForm">
+                <label>
+                  <span>任务输入提示</span>
+                  <input value={draftPlaceholder} onChange={(event) => setDraftPlaceholder(event.target.value)} />
+                </label>
+                <label>
+                  <span>执行说明</span>
+                  <textarea rows={12} value={draftInstructions} onChange={(event) => setDraftInstructions(event.target.value)} />
+                </label>
+                <div className="skillDetailActions">
+                  <button className="ghostButton skillActionButton" onClick={() => setEditing(false)} type="button">取消</button>
+                  <button
+                    className="primaryButton"
+                    onClick={() => {
+                      onUpdate({ ...selectedSkill, inputPlaceholder: draftPlaceholder, instructions: draftInstructions });
+                      setEditing(false);
+                    }}
+                    type="button"
+                  >
+                    保存本次配置
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="skillDetailActions">
+                <button
+                  className="primaryButton"
+                  disabled={!selectedSkill.enabled}
+                  onClick={() => onUseInConversation(selectedSkill.id)}
+                  type="button"
+                >
+                  用于当前对话
+                </button>
+                <button className="ghostButton skillActionButton" onClick={() => setEditing(true)} type="button">
+                  <Settings2 size={16} />
+                  配置
+                </button>
+                <button className="ghostButton skillActionButton dangerAction" onClick={() => onDelete(selectedSkill.id)} type="button">
+                  <Trash2 size={16} />
+                  删除
+                </button>
+              </div>
+            )}
+          </section>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -990,16 +1337,32 @@ function AgentPage({
   skills: AgentSkill[];
   onRefresh: () => Promise<void>;
 }) {
+  const [agentSubview, setAgentSubview] = useState<AgentSubview>('chat');
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirmingTool, setConfirmingTool] = useState(false);
   const [confirmationRequest, setConfirmationRequest] = useState<AgentConfirmationRequest>();
   const [runningAssistantId, setRunningAssistantId] = useState<string>();
   const [selectedSkillId, setSelectedSkillId] = useState<string>();
+  const [skillManagerFocusId, setSkillManagerFocusId] = useState<string>();
+  const [importedSkills, setImportedSkills] = useState<AgentSkill[]>([]);
+  const [disabledSkillIds, setDisabledSkillIds] = useState<string[]>([]);
+  const [skillOverrides, setSkillOverrides] = useState<Record<string, Pick<AgentSkill, 'inputPlaceholder' | 'instructions'>>>({});
   const abortControllerRef = useRef<AbortController | null>(null);
+  const managedSkills = useMemo(() => (
+    [...skills, ...importedSkills].map((skill) => ({
+      ...skill,
+      ...skillOverrides[skill.id],
+      enabled: skill.enabled && !disabledSkillIds.includes(skill.id)
+    }))
+  ), [disabledSkillIds, importedSkills, skillOverrides, skills]);
+  const availableSkills = useMemo(
+    () => managedSkills.filter((skill) => skill.enabled),
+    [managedSkills]
+  );
   const selectedSkill = useMemo(
-    () => skills.find((skill) => skill.id === selectedSkillId),
-    [selectedSkillId, skills]
+    () => availableSkills.find((skill) => skill.id === selectedSkillId),
+    [availableSkills, selectedSkillId]
   );
   const [messages, setMessages] = useState<AgentMessage[]>([
     {
@@ -1009,6 +1372,54 @@ function AgentPage({
         '我是运营 Agent。你可以直接给我一个运营任务，例如维护商品库、查询库存、整理报表、分析客服数据或生成知识库草稿。我会按任务需要选择工具，并在对话里展示执行链路和结果。'
     }
   ]);
+
+  useEffect(() => {
+    if (selectedSkillId && !availableSkills.some((skill) => skill.id === selectedSkillId)) {
+      setSelectedSkillId(undefined);
+    }
+  }, [availableSkills, selectedSkillId]);
+
+  function openSkillManager() {
+    setSkillManagerFocusId(selectedSkillId ?? availableSkills[0]?.id ?? managedSkills[0]?.id);
+    setAgentSubview('skills');
+  }
+
+  function toggleSkill(skillId: string) {
+    setDisabledSkillIds((current) => (
+      current.includes(skillId)
+        ? current.filter((id) => id !== skillId)
+        : [...current, skillId]
+    ));
+  }
+
+  function deleteSkill(skillId: string) {
+    setImportedSkills((current) => current.filter((skill) => skill.id !== skillId));
+    setDisabledSkillIds((current) => current.includes(skillId) ? current : [...current, skillId]);
+    if (selectedSkillId === skillId) {
+      setSelectedSkillId(undefined);
+    }
+    if (skillManagerFocusId === skillId) {
+      setSkillManagerFocusId(managedSkills.find((skill) => skill.id !== skillId)?.id);
+    }
+  }
+
+  function updateSkill(skill: AgentSkill) {
+    setSkillOverrides((current) => ({
+      ...current,
+      [skill.id]: {
+        inputPlaceholder: skill.inputPlaceholder,
+        instructions: skill.instructions
+      }
+    }));
+    setImportedSkills((current) => current.map((item) => item.id === skill.id ? skill : item));
+  }
+
+  async function importSkill(file: File) {
+    const skill = await readSkillImport(file);
+    setImportedSkills((current) => [...current, skill]);
+    setDisabledSkillIds((current) => current.filter((id) => id !== skill.id));
+    setSkillManagerFocusId(skill.id);
+  }
 
   async function submit(nextInput = input, options: { riskConfirmed?: boolean } = {}) {
     if (busy) {
@@ -1156,6 +1567,25 @@ function AgentPage({
     }
   }
 
+  if (agentSubview === 'skills') {
+    return (
+      <AgentSkillManager
+        skills={managedSkills}
+        selectedSkillId={skillManagerFocusId}
+        onBack={() => setAgentSubview('chat')}
+        onDelete={deleteSkill}
+        onImport={importSkill}
+        onSelect={setSkillManagerFocusId}
+        onToggle={toggleSkill}
+        onUpdate={updateSkill}
+        onUseInConversation={(skillId) => {
+          setSelectedSkillId(skillId);
+          setAgentSubview('chat');
+        }}
+      />
+    );
+  }
+
   return (
     <section className="workspacePage agentWorkspace">
       <PageHeader
@@ -1253,9 +1683,10 @@ function AgentPage({
         </div>
 
         <AgentSkillSidebar
-          skills={skills}
+          skills={availableSkills}
           selectedSkillId={selectedSkill?.id}
           onSelect={setSelectedSkillId}
+          onOpenManager={openSkillManager}
         />
       </div>
     </section>
@@ -2049,7 +2480,13 @@ function KnowledgePage({
   );
 }
 
-function SettingsPage() {
+function SettingsPage({
+  themeMode,
+  onThemeChange
+}: {
+  themeMode: ThemeMode;
+  onThemeChange: (theme: ThemeMode) => void;
+}) {
   const [llmSettings, setLlmSettings] = useState<LlmSettings>();
   const [embeddingSettings, setEmbeddingSettings] = useState<EmbeddingSettings>();
   const [searchSettings, setSearchSettings] = useState<SearchSettings>();
@@ -2188,6 +2625,46 @@ function SettingsPage() {
           />
         }
       />
+
+      <section className="panel flat themeSettingsPanel">
+        <div className="panelHeader">
+          <div>
+            <span className="iconBadge">{themeMode === 'dark' ? <Moon size={18} weight="duotone" /> : <Sun size={18} weight="duotone" />}</span>
+            <h2>界面皮肤</h2>
+          </div>
+          <span className="themeCurrentLabel">{themeMode === 'dark' ? '黑色皮肤' : '白色皮肤'}</span>
+        </div>
+
+        <div className="themeSwitcher" role="radiogroup" aria-label="界面皮肤">
+          <button
+            aria-checked={themeMode === 'light'}
+            className={cx('themeOption', themeMode === 'light' && 'active')}
+            onClick={() => onThemeChange('light')}
+            role="radio"
+            type="button"
+          >
+            <span className="themePreview light"><Sun size={18} weight="duotone" /></span>
+            <span>
+              <strong>白色皮肤</strong>
+              <small>适合日常办公和明亮环境。</small>
+            </span>
+          </button>
+
+          <button
+            aria-checked={themeMode === 'dark'}
+            className={cx('themeOption', themeMode === 'dark' && 'active')}
+            onClick={() => onThemeChange('dark')}
+            role="radio"
+            type="button"
+          >
+            <span className="themePreview dark"><Moon size={18} weight="duotone" /></span>
+            <span>
+              <strong>黑色皮肤</strong>
+              <small>适合夜间使用和低亮度环境。</small>
+            </span>
+          </button>
+        </div>
+      </section>
 
       <section className="panel flat systemPromptPanel">
         <div className="panelHeader">
@@ -2666,6 +3143,13 @@ function PlaceholderPage({
 
 export function App() {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('agent');
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    if (typeof window === 'undefined') {
+      return 'light';
+    }
+
+    return window.localStorage.getItem('shopmate-theme') === 'dark' ? 'dark' : 'light';
+  });
   const [suggestions, setSuggestions] = useState<KnowledgeSuggestion[]>([]);
   const [products, setProducts] = useState<ProductKnowledge[]>([]);
   const [knowledgeItems, setKnowledgeItems] = useState<QaKnowledge[]>([]);
@@ -2735,6 +3219,11 @@ export function App() {
     refreshMeta().catch(() => undefined);
   }, []);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = themeMode;
+    window.localStorage.setItem('shopmate-theme', themeMode);
+  }, [themeMode]);
+
   return (
     <main className="productShell">
       <aside className="sidebar">
@@ -2799,7 +3288,7 @@ export function App() {
             onDeleteProduct={handleDeleteProduct}
           />
         )}
-        {activeTab === 'settings' && <SettingsPage />}
+        {activeTab === 'settings' && <SettingsPage themeMode={themeMode} onThemeChange={setThemeMode} />}
         {activeTab === 'channels' && <ChannelsPage />}
         {activeTab !== 'agent' && activeTab !== 'customer' && activeTab !== 'knowledge' && activeTab !== 'settings' && activeTab !== 'channels' && (
           <PlaceholderPage

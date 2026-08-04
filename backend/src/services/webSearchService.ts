@@ -60,11 +60,14 @@ export function shouldUseWebSearch(query: string, localConfidence: number) {
   return wantsWeb || localConfidence < 0.26;
 }
 
-export async function searchWeb(query: string): Promise<WebSource[]> {
+export async function searchWeb(query: string, countOverride?: number): Promise<WebSource[]> {
   const settings = getSearchSettings();
   if (!settings.enabled || !settings.apiKey) {
     return [];
   }
+  const count = typeof countOverride === 'number'
+    ? Math.max(1, Math.min(10, Math.floor(countOverride)))
+    : settings.count;
 
   const response = await fetch(`${settings.baseUrl.replace(/\/$/, '')}/web-search`, {
     method: 'POST',
@@ -75,7 +78,7 @@ export async function searchWeb(query: string): Promise<WebSource[]> {
     body: JSON.stringify({
       query,
       summary: true,
-      count: settings.count
+      count
     })
   });
 

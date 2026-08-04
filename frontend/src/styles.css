@@ -6,12 +6,19 @@
   --surface: #ffffff;
   --surface-subtle: #fafaf8;
   --surface-muted: #f1f1ee;
+  --surface-raised: rgba(255, 255, 255, 0.78);
+  --surface-soft: rgba(255, 255, 255, 0.58);
+  --surface-control: rgba(255, 255, 255, 0.72);
+  --surface-control-hover: rgba(17, 17, 17, 0.065);
   --line: #deded9;
   --line-soft: #ecece8;
   --text: #151515;
   --text-muted: #6f6f6a;
   --text-faint: #9a9a94;
   --accent: #111111;
+  --on-accent: #ffffff;
+  --focus-ring: rgba(17, 17, 17, 0.18);
+  --shadow-soft: 0 18px 54px rgba(24, 24, 20, 0.045);
   --warning: #8a4b10;
   --radius: 12px;
   background: var(--bg);
@@ -19,6 +26,28 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111111;
+  --surface: #181818;
+  --surface-subtle: #202020;
+  --surface-muted: #292929;
+  --surface-raised: #1b1b1b;
+  --surface-soft: #202020;
+  --surface-control: #282828;
+  --surface-control-hover: #303030;
+  --line: #343434;
+  --line-soft: #282828;
+  --text: #f3f3f3;
+  --text-muted: #a3a3a3;
+  --text-faint: #737373;
+  --accent: #f4f4f4;
+  --on-accent: #111111;
+  --focus-ring: rgba(255, 255, 255, 0.28);
+  --shadow-soft: none;
+  --warning: #f0ad63;
 }
 
 * {
@@ -561,12 +590,17 @@ h2 {
   gap: 8px;
 }
 
-.agentReferenceList article {
+.agentReferenceList article,
+.agentReferenceList a {
+  display: block;
   padding-top: 8px;
   border-top: 1px solid #ecece9;
+  color: inherit;
+  text-decoration: none;
 }
 
-.agentReferenceList article:first-child {
+.agentReferenceList article:first-child,
+.agentReferenceList a:first-child {
   padding-top: 0;
   border-top: 0;
 }
@@ -588,7 +622,6 @@ h2 {
 }
 
 .agentComposerWrap {
-  border-top: 1px solid #e5e5e2;
   background: #ffffff;
   padding: 12px;
 }
@@ -2339,6 +2372,205 @@ input:focus {
   background: #2b2b2b;
 }
 
+.themeSettingsPanel {
+  margin-bottom: 14px;
+}
+
+.themeCurrentLabel {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.themeSwitcher {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.themeOption {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 78px;
+  border: 0;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--text);
+  padding: 12px;
+  text-align: left;
+}
+
+.themeOption.active {
+  background: var(--surface);
+  box-shadow: 0 16px 36px rgba(17, 17, 17, 0.08);
+}
+
+.themeOption:focus-visible {
+  outline: 3px solid rgba(17, 17, 17, 0.18);
+  outline-offset: 2px;
+}
+
+.themePreview {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+}
+
+.themePreview.light {
+  background: #ffffff;
+  color: #111111;
+  box-shadow: inset 0 0 0 1px rgba(17, 17, 17, 0.1);
+}
+
+.themePreview.dark {
+  background: #111111;
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.themeOption strong,
+.themeOption small {
+  display: block;
+}
+
+.themeOption strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.themeOption small {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+:root[data-theme="dark"] body,
+:root[data-theme="dark"] .sidebar,
+:root[data-theme="dark"] .panel,
+:root[data-theme="dark"] .sidePanel,
+:root[data-theme="dark"] .placeholderPanel,
+:root[data-theme="dark"] .agentConversation,
+:root[data-theme="dark"] .modalPanel {
+  background: var(--bg);
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .sidebar {
+  border-right-color: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-theme="dark"] .panel,
+:root[data-theme="dark"] .sidePanel,
+:root[data-theme="dark"] .placeholderPanel,
+:root[data-theme="dark"] .modalPanel,
+:root[data-theme="dark"] .message.assistant > span,
+:root[data-theme="dark"] .codexComposer,
+:root[data-theme="dark"] textarea,
+:root[data-theme="dark"] input {
+  background: var(--surface);
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .agentMessages,
+:root[data-theme="dark"] .messages,
+:root[data-theme="dark"] .conversationStatus,
+:root[data-theme="dark"] .agentPlan,
+:root[data-theme="dark"] .agentSuggestionsInline,
+:root[data-theme="dark"] .agentToolGrid > div,
+:root[data-theme="dark"] .inspectorSection,
+:root[data-theme="dark"] .decisionGrid div,
+:root[data-theme="dark"] .debugBody div,
+:root[data-theme="dark"] .stat,
+:root[data-theme="dark"] .suggestion,
+:root[data-theme="dark"] .knowledgeItem,
+:root[data-theme="dark"] .productKnowledgeItem,
+:root[data-theme="dark"] .settingsCard,
+:root[data-theme="dark"] .themeOption {
+  background: var(--surface-subtle);
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .themeOption.active,
+:root[data-theme="dark"] .navItem:hover,
+:root[data-theme="dark"] .navItem.active,
+:root[data-theme="dark"] .customerPromptBar button,
+:root[data-theme="dark"] .examplePrompts button,
+:root[data-theme="dark"] .quickButton,
+:root[data-theme="dark"] .ghostButton,
+:root[data-theme="dark"] .evidenceTabs,
+:root[data-theme="dark"] .conversationStatus span,
+:root[data-theme="dark"] .conversationStatus strong {
+  background: var(--surface-muted);
+}
+
+:root[data-theme="dark"] .messageBody,
+:root[data-theme="dark"] .message.assistant > span,
+:root[data-theme="dark"] .decisionGrid strong,
+:root[data-theme="dark"] .debugBody strong,
+:root[data-theme="dark"] .stat strong,
+:root[data-theme="dark"] .evidenceItem strong,
+:root[data-theme="dark"] .themeOption strong,
+:root[data-theme="dark"] h1,
+:root[data-theme="dark"] h2,
+:root[data-theme="dark"] .panelHeader h2,
+:root[data-theme="dark"] .brand strong {
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .brand span,
+:root[data-theme="dark"] .sidebarFooter span,
+:root[data-theme="dark"] .navItem small,
+:root[data-theme="dark"] .pageDescription,
+:root[data-theme="dark"] .evidenceItem em,
+:root[data-theme="dark"] .evidenceMeta small,
+:root[data-theme="dark"] .composerFooter span,
+:root[data-theme="dark"] .customerPromptBar span,
+:root[data-theme="dark"] .stat span,
+:root[data-theme="dark"] .decisionGrid span,
+:root[data-theme="dark"] .debugBody span,
+:root[data-theme="dark"] .inspectorTitle span {
+  color: var(--text-muted);
+}
+
+:root[data-theme="dark"] .evidenceItem p,
+:root[data-theme="dark"] .markdownMessage p,
+:root[data-theme="dark"] .agentTraceRow p,
+:root[data-theme="dark"] .agentSuggestionsInline p,
+:root[data-theme="dark"] .suggestion p,
+:root[data-theme="dark"] .manualBox pre {
+  color: var(--text-muted);
+}
+
+:root[data-theme="dark"] .primaryButton,
+:root[data-theme="dark"] .smallButton,
+:root[data-theme="dark"] .message.user > span,
+:root[data-theme="dark"] .agentMessage.user .messageAvatar,
+:root[data-theme="dark"] .evidenceMeta span,
+:root[data-theme="dark"] .agentTraceRow > span {
+  background: var(--accent);
+  color: #111111;
+}
+
+:root[data-theme="dark"] .primaryButton:hover,
+:root[data-theme="dark"] .smallButton:hover {
+  background: #ffffff;
+}
+
+:root[data-theme="dark"] .manualBox,
+:root[data-theme="dark"] .evidenceError {
+  background: rgba(240, 173, 99, 0.1);
+}
+
+:root[data-theme="dark"] .themeOption:focus-visible {
+  outline-color: rgba(255, 255, 255, 0.32);
+}
+
 @media (max-width: 1180px) {
   .productShell {
     grid-template-columns: 230px minmax(0, 1fr);
@@ -2421,8 +2653,8 @@ input:focus {
 .agentConversation,
 .modalPanel {
   border-color: transparent;
-  background: rgba(255, 255, 255, 0.78);
-  box-shadow: 0 18px 54px rgba(24, 24, 20, 0.045);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-soft);
 }
 
 .panel.flat,
@@ -2445,7 +2677,7 @@ input:focus {
 .agentMessages,
 .messages {
   border: 0;
-  background: rgba(255, 255, 255, 0.46);
+  background: var(--surface-soft);
 }
 
 .messages {
@@ -2454,7 +2686,7 @@ input:focus {
 
 .message.assistant > span {
   border: 0;
-  background: rgba(255, 255, 255, 0.84);
+  background: var(--surface-raised);
   box-shadow: 0 1px 0 rgba(20, 20, 18, 0.04);
 }
 
@@ -2465,17 +2697,18 @@ input:focus {
 .messageAvatar,
 .iconBadge {
   border: 0;
-  background: rgba(17, 17, 17, 0.055);
+  background: var(--surface-muted);
+  color: var(--text);
 }
 
 .conversationStatus {
   border: 0;
-  background: rgba(255, 255, 255, 0.55);
+  background: var(--surface-soft);
 }
 
 .conversationStatus span,
 .conversationStatus strong {
-  background: rgba(17, 17, 17, 0.045);
+  background: var(--surface-muted);
 }
 
 .sidePanel {
@@ -2487,7 +2720,7 @@ input:focus {
 .sidePanel + .sidePanel {
   margin-top: 18px;
   padding-top: 18px;
-  border-top: 1px solid rgba(17, 17, 17, 0.08);
+  border-top: 1px solid var(--line-soft);
 }
 
 .agentExecution,
@@ -2502,7 +2735,7 @@ input:focus {
 .productKnowledgeItem,
 .settingsCard {
   border: 0;
-  background: rgba(255, 255, 255, 0.58);
+  background: var(--surface-soft);
 }
 
 .inspectorSection {
@@ -2514,13 +2747,13 @@ input:focus {
 .inspectorSection + .inspectorSection,
 .manualBox,
 .debugSection {
-  border-top: 1px solid rgba(17, 17, 17, 0.08);
+  border-top: 1px solid var(--line-soft);
 }
 
 .inspectorSection.pinned {
   top: 0;
   padding-top: 0;
-  background: linear-gradient(180deg, rgba(246, 246, 244, 0.96), rgba(246, 246, 244, 0.76));
+  background: var(--bg);
   backdrop-filter: blur(8px);
 }
 
@@ -2531,7 +2764,7 @@ input:focus {
 .decisionGrid div,
 .debugBody div {
   border: 0;
-  background: rgba(255, 255, 255, 0.62);
+  background: var(--surface-soft);
 }
 
 .stat {
@@ -2541,15 +2774,15 @@ input:focus {
 
 .evidenceTabs {
   border: 0;
-  background: rgba(17, 17, 17, 0.045);
+  background: var(--surface-muted);
 }
 
 .evidenceList {
-  border-top-color: rgba(17, 17, 17, 0.08);
+  border-top-color: var(--line-soft);
 }
 
 .evidenceItem {
-  border-bottom-color: rgba(17, 17, 17, 0.075);
+  border-bottom-color: var(--line-soft);
 }
 
 .customerPromptBar button,
@@ -2557,7 +2790,8 @@ input:focus {
 .quickButton,
 .ghostButton {
   border-color: transparent;
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--surface-control);
+  color: var(--text);
 }
 
 .customerPromptBar button:hover,
@@ -2565,24 +2799,27 @@ input:focus {
 .quickButton:hover,
 .ghostButton:hover {
   border-color: transparent;
-  background: rgba(17, 17, 17, 0.065);
+  background: var(--surface-control-hover);
+  color: var(--text);
 }
 
 .codexComposer,
 textarea,
 input {
-  border-color: rgba(17, 17, 17, 0.12);
-  background: rgba(255, 255, 255, 0.88);
+  border-color: var(--line);
+  background: var(--surface-raised);
+  color: var(--text);
 }
 
 .codexComposer:focus-within,
 textarea:focus,
 input:focus {
-  border-color: rgba(17, 17, 17, 0.72);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .sidebar {
-  border-right-color: rgba(17, 17, 17, 0.08);
+  border-right-color: var(--line-soft);
 }
 
 .navItem {
@@ -2592,7 +2829,425 @@ input:focus {
 .navItem:hover,
 .navItem.active {
   border-color: transparent;
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--surface-control);
+  color: var(--text);
+}
+
+/* The hierarchy pass above intentionally keeps borders quiet. These overrides
+   make every remaining content surface use the active theme rather than a
+   light-only literal colour. */
+:root[data-theme="dark"] .sidebar {
+  background: #151515;
+}
+
+:root[data-theme="dark"] .brandMark,
+:root[data-theme="dark"] .skillPanel,
+:root[data-theme="dark"] .skillCurrentCard,
+:root[data-theme="dark"] .skillCard,
+:root[data-theme="dark"] .agentComposerWrap,
+:root[data-theme="dark"] .agentToolPayload details,
+:root[data-theme="dark"] .agentToolPayload pre,
+:root[data-theme="dark"] .agentReferences,
+:root[data-theme="dark"] .agentExecution,
+:root[data-theme="dark"] .libraryTabs,
+:root[data-theme="dark"] .modalSection,
+:root[data-theme="dark"] .settingsNotice {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .libraryTabs button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+:root[data-theme="dark"] .skillCard:hover,
+:root[data-theme="dark"] .skillCurrentCard.active:hover,
+:root[data-theme="dark"] .skillCard.active,
+:root[data-theme="dark"] .skillCurrentCard.active,
+:root[data-theme="dark"] .libraryTabs button.active,
+:root[data-theme="dark"] .libraryTabs button:hover,
+:root[data-theme="dark"] .suggestion.approved {
+  background: var(--surface-control);
+  border-color: transparent;
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .navItem,
+:root[data-theme="dark"] .agentExecutionToggle,
+:root[data-theme="dark"] .agentExecutionToggle > span,
+:root[data-theme="dark"] .agentExecutionToggle small,
+:root[data-theme="dark"] .agentReferencesTitle,
+:root[data-theme="dark"] .sideTitle,
+:root[data-theme="dark"] .agentExecutionItemHeader span,
+:root[data-theme="dark"] .agentExecutionItemHeader strong,
+:root[data-theme="dark"] .agentReferenceList strong,
+:root[data-theme="dark"] .knowledgeItemHeader strong,
+:root[data-theme="dark"] .suggestionTitle strong,
+:root[data-theme="dark"] .libraryTabs button,
+:root[data-theme="dark"] .skillCard svg,
+:root[data-theme="dark"] .skillCard small,
+:root[data-theme="dark"] .placeholderPanel,
+:root[data-theme="dark"] .settingsSummary,
+:root[data-theme="dark"] .settingsForm label {
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .agentExecutionToggle small,
+:root[data-theme="dark"] .agentExecutionItemHeader em,
+:root[data-theme="dark"] .agentToolPayload summary,
+:root[data-theme="dark"] .agentToolPayload > div > span,
+:root[data-theme="dark"] .agentExecutionEmpty,
+:root[data-theme="dark"] .agentReferenceList span,
+:root[data-theme="dark"] .knowledgeItem p,
+:root[data-theme="dark"] .suggestion p,
+:root[data-theme="dark"] .suggestion small,
+:root[data-theme="dark"] .settingsSummary p,
+:root[data-theme="dark"] .placeholderPanel p,
+:root[data-theme="dark"] .librarySide small {
+  color: var(--text-muted);
+}
+
+:root[data-theme="dark"] .primaryButton,
+:root[data-theme="dark"] .smallButton,
+:root[data-theme="dark"] .message.user > span,
+:root[data-theme="dark"] .agentMessage.user .messageAvatar,
+:root[data-theme="dark"] .evidenceMeta span,
+:root[data-theme="dark"] .agentTraceRow > span {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+:root[data-theme="dark"] .primaryButton:hover:not(:disabled),
+:root[data-theme="dark"] .smallButton:hover:not(:disabled) {
+  background: #ffffff;
+  color: #111111;
+}
+
+:root[data-theme="dark"] textarea::placeholder,
+:root[data-theme="dark"] input::placeholder {
+  color: var(--text-faint);
+}
+
+/* Skill management stays within the Agent workspace: the conversation keeps a
+   compact capability summary, while maintenance gets a focused second level. */
+.skillManageButton,
+.skillMoreButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.skillManageButton:hover,
+.skillMoreButton:hover {
+  color: var(--text);
+}
+
+.skillMoreButton {
+  justify-content: flex-start;
+  min-height: 32px;
+  padding: 0 4px;
+}
+
+.skillBackButton {
+  width: auto;
+  min-height: 36px;
+  padding: 0 11px;
+  font-size: 13px;
+}
+
+.skillManagerToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 76px;
+  margin-bottom: 20px;
+  padding: 0 2px;
+}
+
+.skillManagerToolbar > div {
+  min-width: 0;
+}
+
+.skillManagerToolbar span {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.skillManagerToolbar p {
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.skillManagerToolbar .primaryButton {
+  flex: 0 0 auto;
+}
+
+.skillImportInput {
+  display: none;
+}
+
+.skillNotice {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--accent);
+  background: var(--surface-soft);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.skillManagerLayout {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+
+.skillCatalog {
+  position: sticky;
+  top: 28px;
+  min-width: 0;
+}
+
+.skillCatalogHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.skillCatalogHeader h2,
+.skillDetail h2 {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.skillCatalogHeader span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.skillCatalogList {
+  display: grid;
+  gap: 4px;
+}
+
+.skillCatalogItem {
+  width: 100%;
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  padding: 10px;
+  text-align: left;
+}
+
+.skillCatalogItem:hover,
+.skillCatalogItem.active {
+  background: var(--surface-control);
+}
+
+.skillCatalogItem > svg {
+  color: var(--text-muted);
+}
+
+.skillCatalogItem > span {
+  min-width: 0;
+}
+
+.skillCatalogItem strong,
+.skillCatalogItem small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skillCatalogItem strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.skillCatalogItem small {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.skillCatalogItem i {
+  font-style: normal;
+  color: var(--text-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.skillCatalogItem.active i {
+  color: var(--text);
+}
+
+.skillDetail {
+  min-width: 0;
+  padding: 22px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-soft);
+}
+
+.skillDetailHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.skillDetailHeading > div {
+  min-width: 0;
+}
+
+.skillDetailHeading > div > span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.skillDetailHeading h2 {
+  font-size: 20px;
+}
+
+.skillDetailHeading p {
+  max-width: 720px;
+  margin-top: 9px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.skillSwitch {
+  flex: 0 0 auto;
+  min-width: 82px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+  padding: 0 10px 0 7px;
+}
+
+.skillSwitch i {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--text-faint);
+}
+
+.skillSwitch.active {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.skillSwitch.active i {
+  background: var(--on-accent);
+}
+
+.skillDetailMeta {
+  display: grid;
+  gap: 0;
+  margin-top: 8px;
+}
+
+.skillDetailMeta > div {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 16px;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.skillDetailMeta span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.skillDetailMeta strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.55;
+}
+
+.skillDetailActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.skillActionButton {
+  width: auto;
+  min-height: 38px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.dangerAction {
+  color: #b42318;
+}
+
+.skillConfigForm {
+  display: grid;
+  gap: 16px;
+  margin-top: 22px;
+}
+
+.skillConfigForm label {
+  display: grid;
+  gap: 7px;
+}
+
+.skillConfigForm label > span {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.skillConfigForm textarea {
+  min-height: 220px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+:root[data-theme="dark"] .skillDetail,
+:root[data-theme="dark"] .skillNotice {
+  background: var(--surface-soft);
 }
 
 @media (max-width: 820px) {
@@ -2612,5 +3267,34 @@ input:focus {
 
   .systemPromptFooter .settingsActions button {
     flex: 1;
+  }
+
+  .skillManagerToolbar,
+  .skillDetailHeading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .skillManagerToolbar .primaryButton,
+  .skillSwitch {
+    align-self: flex-start;
+  }
+
+  .skillManagerLayout {
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+
+  .skillCatalog {
+    position: static;
+  }
+
+  .skillDetail {
+    padding: 16px;
+  }
+
+  .skillDetailMeta > div {
+    grid-template-columns: 1fr;
+    gap: 6px;
   }
 }

@@ -122,6 +122,7 @@ export type AgentSkill = {
     type: 'reference' | 'template' | 'checklist' | 'example';
     description: string;
     content: string;
+    path?: string;
   }>;
   outputContract: {
     format: 'markdown' | 'table' | 'json' | 'mixed';
@@ -135,9 +136,14 @@ export type AgentSkill = {
     command: string;
     enabled: boolean;
     risk: 'low' | 'medium' | 'high';
+    path?: string;
   }>;
   tags: string[];
-  source: 'builtin' | 'imported';
+  source: 'github' | 'filesystem' | 'imported' | 'builtin';
+  sourceUrl: string;
+  packageKind: 'filesystem' | 'database';
+  entryFile: string;
+  packageDir: string;
   enabled: boolean;
 };
 
@@ -279,7 +285,7 @@ export function loadAgentSkills() {
   return request<{ skills: AgentSkill[] }>('/api/agent/skills');
 }
 
-export function saveAgentSkillPackage(input: Omit<AgentSkill, 'source'> & { source?: AgentSkill['source'] }) {
+export function saveAgentSkillPackage(input: Omit<AgentSkill, 'source' | 'sourceUrl' | 'packageKind' | 'entryFile' | 'packageDir'> & Partial<Pick<AgentSkill, 'source' | 'sourceUrl' | 'packageKind' | 'entryFile' | 'packageDir'>>) {
   return request<{ skill: AgentSkill }>('/api/agent/skills', {
     method: 'POST',
     body: JSON.stringify(input)

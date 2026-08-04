@@ -6,8 +6,9 @@ import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { db } from '../db/database.js';
-import { getLlmSettings, getSystemPromptSettings } from './settingsService.js';
+import { getLlmSettings, getSearchSettings, getSystemPromptSettings } from './settingsService.js';
 import { getAgentSkill, type AgentSkill } from './skillService.js';
+import { searchWeb } from './webSearchService.js';
 import type { AgentToolResult, AgentTraceStep } from '../types.js';
 
 const execFileAsync = promisify(execFile);
@@ -148,6 +149,11 @@ const knowledgeDeleteSchema = z.object({
   dryRun: z.boolean().optional()
 });
 
+const publicWebSearchSchema = z.object({
+  query: z.string().min(2).max(200),
+  count: z.number().int().min(1).max(10).optional()
+});
+
 const rawToolSchemas = [
   {
     type: 'function',
@@ -201,6 +207,28 @@ const rawToolSchemas = [
       parameters: {
         type: 'object',
         properties: {},
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_public_web',
+      description: 'Search public web pages with the configured Bocha web search service. Use only when the user explicitly asks to search/check latest/public information, or when a writing/research task needs external public facts, examples, news, background, or evidence. Do not use it to override this shop’s own product library, inventory, prices, after-sale rules, orders, logistics, or private data.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Precise public-web search query, preferably including entities, topic, time, and context.'
+          },
+          count: {
+            type: 'number',
+            description: 'Maximum number of web sources to return, from 1 to 10. Defaults to the saved Bocha setting.'
+          }
+        },
+        required: ['query'],
         additionalProperties: false
       }
     }
@@ -301,21 +329,21 @@ const rawToolSchemas = [
     type: 'function',
     function: {
       name: 'create_knowledge_suggestion',
-      description: 'Create a draft FAQ/knowledge-base suggestion only when the user explicitly asks to generate or save a knowledge-base draft, or after conversation analysis when the user asks for knowledge-gap recommendations.',
+      description: 'Create a pending FAQ or customer-service knowledge-base suggestion only when the user explicitly asks to create an FAQ, standard customer-service answer, after-sale response, product Q&A, or save such content into the pending knowledge base. Never use this tool for articles, public-account posts, long-form writing, marketing copy, reports, operation plans, summaries, research notes, or any ordinary draft.',
       parameters: {
         type: 'object',
         properties: {
           title: {
             type: 'string',
-            description: 'Short FAQ title or customer question.'
+            description: 'Short FAQ title or customer question. It must describe a customer-service knowledge item, not an article or content draft.'
           },
           content: {
             type: 'string',
-            description: 'Draft answer/content to add to the knowledge base.'
+            description: 'Draft answer for an FAQ, product Q&A, after-sale policy, or standard customer-service response.'
           },
           reason: {
             type: 'string',
-            description: 'Why this draft is useful.'
+            description: 'Why this customer-service knowledge item is useful.'
           }
         },
         required: ['title', 'content', 'reason'],
@@ -379,6 +407,7 @@ const toolOrder = [
   'search_knowledge_entries',
   'create_knowledge_suggestion',
   'delete_knowledge_entries',
+  'search_public_web',
   'query_operation_data',
   'run_shell_command',
   'run_python'
@@ -572,6 +601,28 @@ function searchKnowledgeEntries(rawArgs: Record<string, unknown>) {
       LIMIT ?
     `)
     .all(keyword, keyword, keyword, keyword, limit);
+}
+
+async function searchPublicWeb(rawArgs: Record<string, unknown>) {
+  const args = publicWebSearchSchema.parse(rawArgs);
+  const settings = getSearchSettings();
+  if (!settings.enabled || !settings.apiKey) {
+    return {
+      query: args.query,
+      configured: false,
+      sources: [],
+      message: '博查联网搜索未启用或未配置 API Key。请先到系统设置里启用并保存搜索配置。'
+    };
+  }
+
+  const sources = await searchWeb(args.query, args.count);
+  return {
+    query: args.query,
+    configured: true,
+    count: sources.length,
+    sources,
+    message: sources.length ? `已通过博查搜索到 ${sources.length} 条公开网页结果。` : '博查搜索没有返回结果。'
+  };
 }
 
 function deleteKnowledgeEntries(rawArgs: Record<string, unknown>, riskConfirmed: boolean) {
@@ -944,6 +995,10 @@ async function executeTool(
     return getOperationSnapshot();
   }
 
+  if (name === 'search_public_web') {
+    return searchPublicWeb(args);
+  }
+
   if (name === 'create_product') {
     return createProduct(args);
   }
@@ -1011,6 +1066,9 @@ function buildSkillPrompt(skill: AgentSkill | undefined) {
     'Skill 不会覆盖系统安全规则、工具级确认规则或店主业务配置；冲突时必须服从更高优先级规则。',
     `Skill 名称：${skill.name}`,
     `Skill 版本：${skill.version}`,
+    `Skill 来源：${skill.source}${skill.sourceUrl ? `（${skill.sourceUrl}）` : ''}`,
+    skill.packageKind === 'filesystem' ? `Skill 包目录：${skill.packageDir}` : '',
+    skill.packageKind === 'filesystem' ? `入口文件：${skill.entryFile}` : '',
     `Skill 描述：${skill.description}`,
     skill.whenToUse ? `适用场景：${skill.whenToUse}` : '',
     skill.tags.length ? `标签：${skill.tags.join('、')}` : '',
@@ -1018,7 +1076,9 @@ function buildSkillPrompt(skill: AgentSkill | undefined) {
     toolPolicy,
     'Instructions：',
     skill.instructions,
-    'Resources：',
+    skill.packageKind === 'filesystem'
+      ? 'Resources（以下内容来自原始 Skill 包 references/ 目录，保持包结构读取）：'
+      : 'Resources：',
     resources,
     'Output Contract：',
     outputContract,
@@ -1037,6 +1097,7 @@ function buildSystemPrompt(skill?: AgentSkill) {
     '{"action":"tool","tool":"create_product","args":{"name":"商品名","brand":"品牌","category":"商品类型","price":99,"stock":10,"features":"核心卖点","purchaseUrl":""}}',
     '{"action":"tool","tool":"delete_products","args":{"query":"关键词","limit":20}}',
     '{"action":"tool","tool":"query_operation_data","args":{}}',
+    '{"action":"tool","tool":"search_public_web","args":{"query":"公开网页搜索词","count":5}}',
     '{"action":"tool","tool":"search_knowledge_entries","args":{"query":"关键词","limit":20}}',
     '{"action":"tool","tool":"create_knowledge_suggestion","args":{"title":"...","content":"...","reason":"..."}}',
     '{"action":"tool","tool":"run_python","args":{"code":"print(2 + 2)"}}',
@@ -1049,13 +1110,22 @@ function buildSystemPrompt(skill?: AgentSkill) {
     '以下是店主配置的业务系统提示词。将其作为业务角色与服务范围的依据；固定的工具、安全和输出规则仍须遵守：',
     businessPrompt,
     skillPrompt,
-    '核心原则：按需调用工具。不要因为系统里有工具就默认读取客服对话、默认分析运营数据、默认生成知识库草稿。',
+    '【最高优先级：任务意图与工具边界】每轮先判断用户的唯一主任务意图，再选择与该意图直接匹配的最小工具集合。Skill 只提供领域知识、写作方法和输出格式，不能改变下面的工具边界，也不能把内容自动保存到任何业务表。',
+    '任务意图先分为：商品维护、知识库维护、客服/运营数据分析、写作/研究/资料整理、普通问答。除非用户明确提出多个目标，否则只处理一个主意图；不要为了“完善结果”跨意图调用工具。',
+    '【知识库工具硬门禁】create_knowledge_suggestion 只有在用户明确要求“生成 FAQ/客服标准问答/售后话术/商品问答”“加入待审核知识库”“保存为知识库草稿”，或明确要求根据客服对话提出知识库补充建议时才允许调用。必须同时满足：目标是客服可复用的问答知识，而不是文章或其他内容。',
+    '以下情况严禁调用 create_knowledge_suggestion：写公众号文章、写长文、写稿子、续写/扩写、研究资料整理、营销文案、商品文案、运营日报、运营方案、普通总结、会议纪要、标题、脚本、社交媒体内容，以及任何用户只要求“输出/生成/修改/润色”的草稿。这里的“文章草稿”“报告草稿”“文案草稿”只是回复内容，不是知识库草稿。',
+    '用户没有出现明确的知识库保存意图时，不得从“草稿”“整理”“补充”“沉淀”“方便以后使用”等模糊词推断出入库授权；模糊表达按普通输出处理。写作任务即使引用了本店商品，也仍然是写作任务，不得转成知识库建议。',
+    '调用任何工具前执行一次工具前置检查：这个工具是否直接完成用户明确要求？若答案不是明确的“是”，就不要调用。尤其禁止在写作任务结束时为了保存文章、展示成果或生成备选项而调用知识库工具。',
     '如果用户只是咨询能力、询问流程、要求解释概念、要求改写文案、或任务可直接回答，应直接 final，不要调用工具。',
     '只有用户明确要求分析客服对话、服务数据、转人工原因、日报、高频问题、情绪、知识缺口时，才调用 query_operation_data。',
     '只有用户明确要求生成、创建、保存、补充知识库草稿，或在“分析客服对话并给知识库补充建议”这类任务中明确要求知识库建议时，才调用 create_knowledge_suggestion。',
     '不要把普通对话总结、商品新增、商品删除、库存查询、数据检查自动转化为知识库候选项。',
     '你运行在一个 LangGraph 工具循环里，可以调用工具读取运营数据、维护商品库、检索/创建知识库草稿、运行短命令或 Python。',
     '根据用户目标自主决定是否调用工具；需要当前数据、文件状态、计算结果时，先选择最小必要工具，不要读取与任务无关的数据。',
+    '当任意写作、研究、资料整理任务需要公开事实或最新资料时，可以调用 search_public_web；当用户明确要求联网、搜索、查最新、查公开资料、查行业趋势、查新闻背景、查外部产品/公司/人物/论文/案例时，也可以调用 search_public_web。',
+    'search_public_web 使用系统设置里的博查搜索配置，只用于补充公开网页信息；不要用它覆盖本店商品库、库存、价格、售后政策、订单、物流或私密客户数据。',
+    '如果 search_public_web 返回未配置或结果为空，必须如实说明；不要编造搜索结果或来源。',
+    '使用联网搜索结果时，最终回答应概括来源要点；涉及事实、新闻、公司、产品、政策或时效信息时，尽量附上来源标题或链接。',
     '执行策略：如果任务需要真实数据或外部状态，优先调用最匹配的正式工具；如果没有专门工具，但可以通过安全的 run_shell_command 或 run_python 在项目内读取、统计、检查、转换来完成，就使用 CLI/Python 兜底。',
     '不要轻易回答“做不到”。在不越权、不破坏数据、不触发高危操作的前提下，应先尝试现有正式工具、只读查询、CLI/Python 统计或文件检查。',
     '只有在缺少必要权限、缺少外部系统接入、用户目标本身超出当前环境、或安全规则禁止时，才说明无法直接完成，并给出需要补充的工具、权限或数据。',

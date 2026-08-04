@@ -1,6 +1,12 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { db } from '../db/database.js';
 
 const now = () => new Date().toISOString();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const projectRoot = path.resolve(__dirname, '../../..');
 
 export type SkillToolPolicy = {
   preferred: string[];
@@ -14,6 +20,7 @@ export type SkillResource = {
   type: 'reference' | 'template' | 'checklist' | 'example';
   description: string;
   content: string;
+  path?: string;
 };
 
 export type SkillOutputContract = {
@@ -29,7 +36,11 @@ export type SkillScript = {
   command: string;
   enabled: boolean;
   risk: 'low' | 'medium' | 'high';
+  path?: string;
 };
+
+export type AgentSkillSource = 'github' | 'filesystem' | 'imported' | 'builtin';
+export type AgentSkillPackageKind = 'filesystem' | 'database';
 
 export type AgentSkill = {
   id: string;
@@ -44,7 +55,11 @@ export type AgentSkill = {
   outputContract: SkillOutputContract;
   scripts: SkillScript[];
   tags: string[];
-  source: 'builtin' | 'imported';
+  source: AgentSkillSource;
+  sourceUrl: string;
+  packageKind: AgentSkillPackageKind;
+  entryFile: string;
+  packageDir: string;
   enabled: boolean;
 };
 
@@ -77,9 +92,29 @@ type AgentSkillRow = {
   resources?: string | null;
   output_contract?: string | null;
   scripts?: string | null;
+  package_kind?: string | null;
+  entry_file?: string | null;
+  package_dir?: string | null;
+  source_url?: string | null;
   tags: string | null;
   source: string;
   enabled: number;
+};
+
+type MountedSkillDefinition = {
+  id: string;
+  fallbackName: string;
+  fallbackDescription: string;
+  packageDir: string;
+  entryFile: string;
+  source: AgentSkillSource;
+  sourceUrl: string;
+  version: string;
+  tags: string[];
+  inputPlaceholder: string;
+  whenToUse: string;
+  toolPolicy: SkillToolPolicy;
+  outputContract: SkillOutputContract;
 };
 
 const emptyToolPolicy: SkillToolPolicy = {
@@ -94,215 +129,186 @@ const defaultOutputContract: SkillOutputContract = {
   rules: ['使用中文回答。', '只输出与本轮任务相关的内容。']
 };
 
-const builtinSkills: AgentSkill[] = [
+const legacyBuiltinSkillIds = [
+  'builtin_information_organizer',
+  'builtin_data_analysis',
+  'builtin_copywriting'
+];
+
+const mountedSkillPackages: MountedSkillDefinition[] = [
   {
-    id: 'builtin_information_organizer',
-    name: '信息整理',
-    description: '把零散内容整理成结构化结果',
-    version: '1.0.0',
-    whenToUse: '用户需要整理文本、提取字段、制作表格、归纳重点或把混乱信息变成可执行清单时使用。',
-    inputPlaceholder: '粘贴需要整理的内容',
+    id: 'khazix_writer',
+    fallbackName: '卡兹克写文章',
+    fallbackDescription: '数字生命卡兹克的公众号长文写作 Skill，适合写稿、扩写、续写、根据素材产出公众号长文。',
+    packageDir: 'backend/agent-skills/khazix-writer',
+    entryFile: 'backend/agent-skills/khazix-writer/SKILL.md',
+    source: 'github',
+    sourceUrl: 'https://github.com/KKKKhazix/khazix-skills/tree/main/khazix-writer',
+    version: 'github-main',
+    tags: ['写作', '公众号', '长文', '卡兹克'],
+    inputPlaceholder: '输入选题、素材、要点或已有草稿，让卡兹克写成公众号长文',
+    whenToUse: '当用户需要撰写公众号文章、写稿子、续写文章、扩写长文、根据素材产出长文时使用；不用于短内容、小红书、推特、朋友圈或纯标题摘要。',
     toolPolicy: {
       preferred: [],
       required: [],
       forbidden: []
     },
-    resources: [
-      {
-        id: 'info_table_template',
-        title: '信息整理表格模板',
-        type: 'template',
-        description: '用于把非结构化文字转成字段表。',
-        content: [
-          '| 项目 | 内容 | 状态 |',
-          '| --- | --- | --- |',
-          '| 主题 | 从用户材料中提取 | 已确认 / 待补充 |',
-          '| 关键事实 | 逐条列出，不合并不确定信息 | 已确认 / 待补充 |',
-          '| 下一步 | 可执行动作 | 已确认 / 待补充 |'
-        ].join('\n')
-      },
-      {
-        id: 'info_quality_checklist',
-        title: '整理质量检查清单',
-        type: 'checklist',
-        description: '输出前用于检查是否有编造或遗漏。',
-        content: [
-          '- 没有把用户没说的信息当成事实。',
-          '- 不确定字段标记为“待补充”。',
-          '- 输出结构能直接复制使用。',
-          '- 没有主动扩展到客服数据、知识库草稿或商品库操作。'
-        ].join('\n')
-      }
-    ],
-    outputContract: {
-      format: 'mixed',
-      requiredSections: ['整理结果', '待补充信息'],
-      rules: [
-        '优先使用表格、清单和短标题。',
-        '如无待补充信息，可以写“暂无”。',
-        '不要编造用户没有提供的信息。'
-      ]
-    },
-    scripts: [],
-    tags: ['整理', '结构化'],
-    source: 'builtin',
-    enabled: true,
-    instructions: [
-      '你正在使用「信息整理」Skill Package。',
-      '目标：把用户提供的零散信息整理成清晰、结构化、可复制的结果。',
-      '规则：',
-      '1. 优先使用表格、清单、分组标题来降低阅读成本。',
-      '2. 不要编造用户没有提供的信息；不确定的字段标记为“待补充”。',
-      '3. 如果用户明确要求某种格式，优先遵守用户格式。',
-      '4. 输出要简洁，避免把整理任务扩展成无关分析。'
-    ].join('\n')
-  },
-  {
-    id: 'builtin_data_analysis',
-    name: '数据分析',
-    description: '分析数据、发现趋势和异常',
-    version: '1.0.0',
-    whenToUse: '用户需要分析表格、运营数据、客服数据、指标变化、异常原因、复盘或趋势时使用。',
-    inputPlaceholder: '描述要分析的数据或时间范围',
-    toolPolicy: {
-      preferred: ['query_operation_data', 'run_python'],
-      required: [],
-      forbidden: []
-    },
-    resources: [
-      {
-        id: 'analysis_frame',
-        title: '运营分析框架',
-        type: 'reference',
-        description: '用于把分析结果落到运营动作。',
-        content: [
-          '分析时按这个顺序组织：',
-          '1. 先确认分析对象、口径和时间范围。',
-          '2. 再给关键发现，必须说明证据来源或计算口径。',
-          '3. 对异常给出可能原因，并区分事实与推测。',
-          '4. 最后给出下一步动作，尽量具体到“查什么、改什么、观察什么”。'
-        ].join('\n')
-      },
-      {
-        id: 'analysis_output_template',
-        title: '分析输出模板',
-        type: 'template',
-        description: '默认分析报告结构。',
-        content: [
-          '## 关键发现',
-          '## 证据',
-          '## 可能原因',
-          '## 建议动作',
-          '## 数据不足或假设'
-        ].join('\n')
-      }
-    ],
-    outputContract: {
-      format: 'mixed',
-      requiredSections: ['关键发现', '证据', '可能原因', '建议动作'],
-      rules: [
-        '数据不足时必须说明不足，不要编造指标或趋势。',
-        '涉及计算、聚合或清洗时，优先使用正式工具；没有专门工具时再用安全的 Python/CLI 兜底。',
-        '只有用户明确要求分析客服对话、运营数据、转人工原因、高频问题、情绪或知识缺口时，才读取运营数据。'
-      ]
-    },
-    scripts: [
-      {
-        id: 'local_analysis_helper',
-        name: '本地数据分析脚本位',
-        description: '为未来 Skill 包脚本预留：用于安全聚合用户提供的数据文件。',
-        command: 'python scripts/analyze.py',
-        enabled: false,
-        risk: 'medium'
-      }
-    ],
-    tags: ['分析', '趋势'],
-    source: 'builtin',
-    enabled: true,
-    instructions: [
-      '你正在使用「数据分析」Skill Package。',
-      '目标：围绕用户指定的数据回答“发生了什么、为什么、下一步怎么做”。',
-      '规则：',
-      '1. 先确认分析对象和时间范围；如果用户没有给出范围，使用最小必要范围并说明假设。',
-      '2. 只有用户明确要求分析客服对话、运营数据、转人工原因、高频问题、情绪或知识缺口时，才读取运营数据。',
-      '3. 输出必须包含：关键发现、证据、可能原因、建议动作。',
-      '4. 数据不足时明确说明不足，不要编造指标或趋势。',
-      '5. 需要计算、聚合或清洗时，可以优先使用正式查询工具；没有专门工具时再用安全的 Python/CLI 兜底。'
-    ].join('\n')
-  },
-  {
-    id: 'builtin_copywriting',
-    name: '文案生成',
-    description: '生成面向用户的中文文案',
-    version: '1.0.0',
-    whenToUse: '用户需要生成、润色、改写营销文案、客服话术、通知公告、活动说明或对外表达时使用。',
-    inputPlaceholder: '告诉我要写什么文案、给谁看、语气如何',
-    toolPolicy: {
-      preferred: [],
-      required: [],
-      forbidden: []
-    },
-    resources: [
-      {
-        id: 'copy_style_guide',
-        title: '中文电商文案风格',
-        type: 'reference',
-        description: '默认文案语气约束。',
-        content: [
-          '- 口吻自然，像店铺运营而不是技术系统。',
-          '- 少用夸张承诺，避免“绝对、永久、最强”等不可证实表达。',
-          '- 卖点要和用户场景绑定，不堆形容词。',
-          '- 面向客户的文字不要出现内部工具、数据库、RAG 等技术表达。'
-        ].join('\n')
-      },
-      {
-        id: 'copy_variant_template',
-        title: '文案多版本模板',
-        type: 'template',
-        description: '默认生成两个可选版本。',
-        content: [
-          '## 自然版',
-          '适合私域、客服回复或详情页轻介绍。',
-          '',
-          '## 精简版',
-          '适合按钮、短信、标题或卡片。'
-        ].join('\n')
-      }
-    ],
     outputContract: {
       format: 'markdown',
-      requiredSections: ['自然版', '精简版'],
+      requiredSections: [],
       rules: [
-        '默认至少输出两个版本。',
-        '不要编造价格、活动力度、承诺或规则。',
-        '如果信息不足，先给通用版本，并列出可补充信息。'
+        '遵循原始 SKILL.md 的写作流程、风格边界和自检体系。',
+        '如果素材不足，应先向用户追问关键素材，不要硬编第一手经历。',
+        '不要把外部 Skill 降级成普通提示词；必须尊重包内 references 的写作方法论和风格示例。'
       ]
-    },
-    scripts: [],
-    tags: ['文案', '改写'],
-    source: 'builtin',
-    enabled: true,
-    instructions: [
-      '你正在使用「文案生成」Skill Package。',
-      '目标：生成清晰、自然、可直接使用的中文文案。',
-      '规则：',
-      '1. 先识别目标用户、使用渠道、语气、核心卖点或主要信息。',
-      '2. 信息不足时，可以先给一个通用版本，并列出可补充的信息。',
-      '3. 默认输出至少两个版本：自然版和精简版。',
-      '4. 不要编造价格、活动力度、承诺或规则；没有依据的内容要标注为待确认。',
-      '5. 面向客户的文字要自然，不要出现内部工具、RAG、数据库等技术表达。'
-    ].join('\n')
+    }
   }
 ];
+
+function toAbsoluteProjectPath(projectRelativePath: string) {
+  const resolved = path.resolve(projectRoot, projectRelativePath);
+  if (!resolved.startsWith(projectRoot)) {
+    throw new Error(`Skill package path is outside project root: ${projectRelativePath}`);
+  }
+  return resolved;
+}
+
+function toProjectRelative(absolutePath: string) {
+  return path.relative(projectRoot, absolutePath).replace(/\\/g, '/');
+}
+
+function readTextFileInside(rootDir: string, filePath: string) {
+  const resolvedRoot = path.resolve(rootDir);
+  const resolvedFile = path.resolve(filePath);
+  if (!resolvedFile.startsWith(resolvedRoot)) {
+    throw new Error(`Skill package tried to read outside its directory: ${filePath}`);
+  }
+  return fs.readFileSync(resolvedFile, 'utf8');
+}
+
+function parseFrontMatter(markdown: string) {
+  const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+  if (!match) {
+    return {};
+  }
+
+  const raw = match[1];
+  const result: Record<string, string> = {};
+  const lines = raw.split(/\r?\n/);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const fieldMatch = line.match(/^([A-Za-z0-9_-]+):(?:\s*(.*))?$/);
+    if (!fieldMatch) {
+      continue;
+    }
+
+    const key = fieldMatch[1];
+    const value = fieldMatch[2] ?? '';
+    if (value === '|') {
+      const block: string[] = [];
+      index += 1;
+      while (index < lines.length && /^\s+/.test(lines[index])) {
+        block.push(lines[index].replace(/^\s{2}/, ''));
+        index += 1;
+      }
+      index -= 1;
+      result[key] = block.join('\n').trim();
+    } else {
+      result[key] = value.replace(/^['"]|['"]$/g, '').trim();
+    }
+  }
+
+  return result;
+}
+
+function discoverReferenceResources(packageDir: string) {
+  const referencesDir = path.join(packageDir, 'references');
+  if (!fs.existsSync(referencesDir)) {
+    return [];
+  }
+
+  return fs.readdirSync(referencesDir, { withFileTypes: true })
+    .filter((item) => item.isFile() && item.name.toLowerCase().endsWith('.md'))
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((item): SkillResource => {
+      const absolutePath = path.join(referencesDir, item.name);
+      const content = readTextFileInside(packageDir, absolutePath);
+      const title = content.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? item.name;
+      return {
+        id: item.name.replace(/\.md$/i, ''),
+        title,
+        type: 'reference',
+        description: `原始 Skill 包参考文件：references/${item.name}`,
+        content,
+        path: toProjectRelative(absolutePath)
+      };
+    });
+}
+
+function discoverScriptDeclarations(packageDir: string) {
+  const scriptsDir = path.join(packageDir, 'scripts');
+  if (!fs.existsSync(scriptsDir)) {
+    return [];
+  }
+
+  return fs.readdirSync(scriptsDir, { withFileTypes: true })
+    .filter((item) => item.isFile())
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((item): SkillScript => {
+      const relativePath = `scripts/${item.name}`;
+      return {
+        id: item.name.replace(/\.[^.]+$/, ''),
+        name: item.name,
+        description: `原始 Skill 包脚本声明：${relativePath}`,
+        command: relativePath,
+        enabled: false,
+        risk: 'medium',
+        path: toProjectRelative(path.join(scriptsDir, item.name))
+      };
+    });
+}
+
+function loadMountedSkill(definition: MountedSkillDefinition): AgentSkill {
+  const packageDir = toAbsoluteProjectPath(definition.packageDir);
+  const entryFile = toAbsoluteProjectPath(definition.entryFile);
+  const instructions = readTextFileInside(packageDir, entryFile);
+  const frontMatter = parseFrontMatter(instructions);
+  const frontMatterName = frontMatter.name && frontMatter.name !== definition.id.replace(/_/g, '-')
+    ? frontMatter.name
+    : '';
+
+  return {
+    id: definition.id,
+    name: frontMatterName || definition.fallbackName,
+    description: frontMatter.description || definition.fallbackDescription,
+    version: definition.version,
+    instructions,
+    whenToUse: definition.whenToUse,
+    inputPlaceholder: definition.inputPlaceholder,
+    toolPolicy: definition.toolPolicy,
+    resources: discoverReferenceResources(packageDir),
+    outputContract: definition.outputContract,
+    scripts: discoverScriptDeclarations(packageDir),
+    tags: definition.tags,
+    source: definition.source,
+    sourceUrl: definition.sourceUrl,
+    packageKind: 'filesystem',
+    entryFile: toProjectRelative(entryFile),
+    packageDir: toProjectRelative(packageDir),
+    enabled: true
+  };
+}
 
 function writeSkillPackage(skill: AgentSkill) {
   const timestamp = now();
   db.prepare(`
     INSERT INTO agent_skills (
       id, name, description, package_version, instructions, when_to_use, input_placeholder,
-      tools, tool_policy, resources, output_contract, scripts, tags, source, enabled, created_at, updated_at
+      tools, tool_policy, resources, output_contract, scripts, package_kind, entry_file, package_dir,
+      source_url, tags, source, enabled, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       description = excluded.description,
@@ -315,6 +321,10 @@ function writeSkillPackage(skill: AgentSkill) {
       resources = excluded.resources,
       output_contract = excluded.output_contract,
       scripts = excluded.scripts,
+      package_kind = excluded.package_kind,
+      entry_file = excluded.entry_file,
+      package_dir = excluded.package_dir,
+      source_url = excluded.source_url,
       tags = excluded.tags,
       source = excluded.source,
       enabled = excluded.enabled,
@@ -324,14 +334,18 @@ function writeSkillPackage(skill: AgentSkill) {
     skill.name,
     skill.description,
     skill.version,
-    skill.instructions,
+    skill.packageKind === 'filesystem' ? `Mounted Skill Package. Entry: ${skill.entryFile}` : skill.instructions,
     skill.whenToUse,
     skill.inputPlaceholder,
     JSON.stringify(skill.toolPolicy.preferred),
     JSON.stringify(skill.toolPolicy),
-    JSON.stringify(skill.resources),
+    skill.packageKind === 'filesystem' ? JSON.stringify([]) : JSON.stringify(skill.resources),
     JSON.stringify(skill.outputContract),
-    JSON.stringify(skill.scripts),
+    skill.packageKind === 'filesystem' ? JSON.stringify([]) : JSON.stringify(skill.scripts),
+    skill.packageKind,
+    skill.entryFile,
+    skill.packageDir,
+    skill.sourceUrl,
     JSON.stringify(skill.tags),
     skill.source,
     skill.enabled ? 1 : 0,
@@ -425,6 +439,17 @@ function parseScriptList(value: string | null | undefined) {
   return parseJsonObject(value, [] as SkillScript[], (item): item is SkillScript[] => Array.isArray(item) && item.every(isSkillScript));
 }
 
+function normalizeSource(value: string): AgentSkillSource {
+  if (value === 'github' || value === 'filesystem' || value === 'imported' || value === 'builtin') {
+    return value;
+  }
+  return 'imported';
+}
+
+function normalizePackageKind(value: string | null | undefined): AgentSkillPackageKind {
+  return value === 'filesystem' ? 'filesystem' : 'database';
+}
+
 function normalizeToolPolicy(row: AgentSkillRow) {
   const fromPackage = parseJsonObject(row.tool_policy, undefined as SkillToolPolicy | undefined, isToolPolicy);
   if (fromPackage) {
@@ -437,7 +462,57 @@ function normalizeToolPolicy(row: AgentSkillRow) {
     : emptyToolPolicy;
 }
 
+function hydrateFilesystemSkill(row: AgentSkillRow) {
+  const definition = mountedSkillPackages.find((item) => item.id === row.id);
+  if (definition) {
+    return loadMountedSkill(definition);
+  }
+
+  const entryFile = row.entry_file;
+  const packageDir = row.package_dir;
+  if (!entryFile || !packageDir) {
+    return undefined;
+  }
+
+  const absolutePackageDir = toAbsoluteProjectPath(packageDir);
+  const absoluteEntryFile = toAbsoluteProjectPath(entryFile);
+  if (!fs.existsSync(absoluteEntryFile)) {
+    return undefined;
+  }
+
+  const instructions = readTextFileInside(absolutePackageDir, absoluteEntryFile);
+  const frontMatter = parseFrontMatter(instructions);
+  return {
+    id: row.id,
+    name: frontMatter.name || row.name,
+    description: frontMatter.description || row.description,
+    version: row.package_version ?? '1.0.0',
+    instructions,
+    whenToUse: row.when_to_use ?? '',
+    inputPlaceholder: row.input_placeholder ?? '',
+    toolPolicy: normalizeToolPolicy(row),
+    resources: discoverReferenceResources(absolutePackageDir),
+    outputContract: parseJsonObject(row.output_contract, defaultOutputContract, isSkillOutputContract),
+    scripts: discoverScriptDeclarations(absolutePackageDir),
+    tags: parseJsonList(row.tags),
+    source: normalizeSource(row.source),
+    sourceUrl: row.source_url ?? '',
+    packageKind: 'filesystem',
+    entryFile,
+    packageDir,
+    enabled: Boolean(row.enabled)
+  } satisfies AgentSkill;
+}
+
 function mapRow(row: AgentSkillRow): AgentSkill {
+  const packageKind = normalizePackageKind(row.package_kind);
+  if (packageKind === 'filesystem') {
+    const mounted = hydrateFilesystemSkill(row);
+    if (mounted) {
+      return mounted;
+    }
+  }
+
   return {
     id: row.id,
     name: row.name,
@@ -451,22 +526,29 @@ function mapRow(row: AgentSkillRow): AgentSkill {
     outputContract: parseJsonObject(row.output_contract, defaultOutputContract, isSkillOutputContract),
     scripts: parseScriptList(row.scripts),
     tags: parseJsonList(row.tags),
-    source: row.source === 'imported' ? 'imported' : 'builtin',
+    source: normalizeSource(row.source),
+    sourceUrl: row.source_url ?? '',
+    packageKind,
+    entryFile: row.entry_file ?? '',
+    packageDir: row.package_dir ?? '',
     enabled: Boolean(row.enabled)
   };
 }
 
-export function ensureBuiltinAgentSkills() {
+export function ensureRegisteredAgentSkills() {
   const transaction = db.transaction(() => {
-    for (const skill of builtinSkills) {
-      writeSkillPackage(skill);
+    const placeholders = legacyBuiltinSkillIds.map(() => '?').join(', ');
+    db.prepare(`DELETE FROM agent_skills WHERE id IN (${placeholders})`).run(...legacyBuiltinSkillIds);
+
+    for (const definition of mountedSkillPackages) {
+      writeSkillPackage(loadMountedSkill(definition));
     }
   });
   transaction();
 }
 
 export function saveImportedAgentSkill(input: AgentSkillPackageInput) {
-  ensureBuiltinAgentSkills();
+  ensureRegisteredAgentSkills();
   const skill: AgentSkill = {
     id: input.id,
     name: input.name,
@@ -481,6 +563,10 @@ export function saveImportedAgentSkill(input: AgentSkillPackageInput) {
     scripts: input.scripts ?? [],
     tags: input.tags ?? [],
     source: 'imported',
+    sourceUrl: '',
+    packageKind: 'database',
+    entryFile: '',
+    packageDir: '',
     enabled: input.enabled ?? true
   };
 
@@ -489,11 +575,12 @@ export function saveImportedAgentSkill(input: AgentSkillPackageInput) {
 }
 
 export function listAgentSkills() {
-  ensureBuiltinAgentSkills();
+  ensureRegisteredAgentSkills();
   const rows = db.prepare(`
     SELECT
       id, name, description, package_version, instructions, when_to_use, input_placeholder,
-      tools, tool_policy, resources, output_contract, scripts, tags, source, enabled
+      tools, tool_policy, resources, output_contract, scripts, package_kind, entry_file,
+      package_dir, source_url, tags, source, enabled
     FROM agent_skills
     WHERE enabled = 1
     ORDER BY source ASC, created_at ASC
@@ -507,11 +594,12 @@ export function getAgentSkill(id: string | undefined) {
     return undefined;
   }
 
-  ensureBuiltinAgentSkills();
+  ensureRegisteredAgentSkills();
   const row = db.prepare(`
     SELECT
       id, name, description, package_version, instructions, when_to_use, input_placeholder,
-      tools, tool_policy, resources, output_contract, scripts, tags, source, enabled
+      tools, tool_policy, resources, output_contract, scripts, package_kind, entry_file,
+      package_dir, source_url, tags, source, enabled
     FROM agent_skills
     WHERE id = ? AND enabled = 1
   `).get(id) as AgentSkillRow | undefined;
