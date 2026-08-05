@@ -13,6 +13,7 @@ import {
   updateSystemPromptSettings,
   resetSystemPromptSettings
 } from '../services/settingsService.js';
+import { refreshWecomAibotConnection } from '../services/wecomAibotLongConnectionService.js';
 
 const router = Router();
 
@@ -31,6 +32,7 @@ const searchSettingsSchema = z.object({
 
 const wecomSettingsSchema = z.object({
   enabled: z.boolean().optional(),
+  botId: z.string().optional(),
   corpId: z.string().optional(),
   secret: z.string().optional(),
   token: z.string().optional(),
@@ -95,7 +97,9 @@ router.put('/wecom', (req, res) => {
     return;
   }
 
-  res.json(updateWecomSettings(parsed.data));
+  const settings = updateWecomSettings(parsed.data);
+  refreshWecomAibotConnection();
+  res.json(settings);
 });
 
 router.get('/system-prompt', (_req, res) => {

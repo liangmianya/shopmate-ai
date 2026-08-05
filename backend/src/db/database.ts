@@ -139,6 +139,9 @@ export function migrate() {
       external_user_id TEXT NOT NULL,
       open_kfid TEXT,
       conversation_id TEXT NOT NULL,
+      object_type TEXT DEFAULT 'single',
+      display_name TEXT DEFAULT '',
+      takeover_status TEXT DEFAULT 'bot',
       created_at TEXT,
       updated_at TEXT,
       UNIQUE(channel, external_user_id, open_kfid)
@@ -151,6 +154,7 @@ export function migrate() {
       conversation_id TEXT NOT NULL,
       role TEXT NOT NULL,
       content TEXT,
+      sender_type TEXT DEFAULT 'bot',
       raw_payload TEXT,
       created_at TEXT,
       UNIQUE(channel, external_msg_id)
@@ -177,6 +181,21 @@ export function migrate() {
   ensureSkillColumn('entry_file', 'entry_file TEXT');
   ensureSkillColumn('package_dir', 'package_dir TEXT');
   ensureSkillColumn('source_url', 'source_url TEXT');
+
+  const channelConversationColumns = db.prepare('PRAGMA table_info(channel_conversations)').all() as Array<{ name: string }>;
+  const ensureChannelConversationColumn = (name: string, definition: string) => {
+    if (!channelConversationColumns.some((column) => column.name === name)) {
+      db.prepare(`ALTER TABLE channel_conversations ADD COLUMN ${definition}`).run();
+    }
+  };
+  ensureChannelConversationColumn('object_type', "object_type TEXT DEFAULT 'single'");
+  ensureChannelConversationColumn('display_name', "display_name TEXT DEFAULT ''");
+  ensureChannelConversationColumn('takeover_status', "takeover_status TEXT DEFAULT 'bot'");
+
+  const channelMessageColumns = db.prepare('PRAGMA table_info(channel_messages)').all() as Array<{ name: string }>;
+  if (!channelMessageColumns.some((column) => column.name === 'sender_type')) {
+    db.prepare("ALTER TABLE channel_messages ADD COLUMN sender_type TEXT DEFAULT 'bot'").run();
+  }
 }
 
 export function resetData() {

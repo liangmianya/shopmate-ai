@@ -3,11 +3,14 @@ import cors from 'cors';
 import express from 'express';
 import { migrate } from './db/database.js';
 import chatRouter from './routes/chat.js';
+import conversationsRouter from './routes/conversations.js';
 import agentRouter from './routes/agent.js';
+import analyticsRouter from './routes/analytics.js';
 import knowledgeRouter from './routes/knowledge.js';
 import productsRouter from './routes/products.js';
 import settingsRouter from './routes/settings.js';
 import wecomRouter from './routes/wecom.js';
+import { startWecomAibotConnection } from './services/wecomAibotLongConnectionService.js';
 
 migrate();
 
@@ -22,7 +25,9 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api/chat', chatRouter);
+app.use('/api/conversations', conversationsRouter);
 app.use('/api/agent', agentRouter);
+app.use('/api/analytics', analyticsRouter);
 app.use('/api/knowledge', knowledgeRouter);
 app.use('/api/products', productsRouter);
 app.use('/api/settings', settingsRouter);
@@ -30,4 +35,5 @@ app.use('/api/channels/wecom', wecomRouter);
 
 app.listen(port, () => {
   console.log(`Backend listening on http://localhost:${port}`);
+  startWecomAibotConnection();
 });

@@ -8,9 +8,11 @@ import {
   ChevronRight,
   ClipboardCheck,
   Database,
+  Download,
   FileText,
   KeyRound,
   Layers,
+  Leaf,
   Link,
   MessagesSquare,
   Package,
@@ -49,6 +51,9 @@ import {
   EmbeddingSettings,
   KnowledgeSuggestion,
   LlmSettings,
+  ManagedConversation,
+  ManagedConversationMessage,
+  OperationAnalytics,
   ProductKnowledge,
   QaKnowledge,
   SearchSettings,
@@ -63,6 +68,9 @@ import {
   deleteSuggestion,
   loadEmbeddingSettings,
   loadAgentSkills,
+  loadManagedConversationMessages,
+  loadManagedConversations,
+  loadOperationAnalytics,
   loadKnowledge,
   loadLlmSettings,
   loadProducts,
@@ -77,18 +85,21 @@ import {
   saveSearchSettings,
   saveSystemPromptSettings,
   saveWecomSettings,
-  sendChatStream
+  sendChatStream,
+  releaseManagedConversation,
+  sendManagedConversationMessage,
+  takeoverManagedConversation
 } from './api';
 import shopmateLogo from './assets/shopmate-logo.png';
 import katex from 'katex';
 import JSZip from 'jszip';
 import 'katex/dist/katex.min.css';
 
-type WorkspaceTab = 'agent' | 'customer' | 'knowledge' | 'settings' | 'channels' | 'analysis' | 'reports';
+type WorkspaceTab = 'agent' | 'customer' | 'conversations' | 'knowledge' | 'settings' | 'channels' | 'analysis' | 'reports';
 
 type Message = ChatMessage;
 
-type ThemeMode = 'light' | 'dark';
+type ThemeMode = 'light' | 'dark' | 'mist' | 'forest';
 
 type AgentSubview = 'chat' | 'skills';
 
@@ -136,6 +147,12 @@ const tabs: Array<{
     icon: ChatsCircle
   },
   {
+    id: 'conversations',
+    label: '对话管理',
+    description: '接管企微会话',
+    icon: ChatsCircle
+  },
+  {
     id: 'knowledge',
     label: '知识库',
     description: 'FAQ 审核入库',
@@ -174,6 +191,65 @@ const demoQuestions = [
 ];
 
 const formatPercent = (value: number) => `${Math.round(value * 100)}%`;
+
+function themeLabel(theme: ThemeMode) {
+  const labels: Record<ThemeMode, string> = {
+    light: '白色皮肤',
+    dark: '黑色皮肤',
+    mist: '雾蓝皮肤',
+    forest: '森绿皮肤'
+  };
+  return labels[theme];
+}
+
+function formatChatTime(value: string) {
+  if (!value) {
+    return '';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+function formatAnalyticsDay(value: string) {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
+}
+
+function emotionLabel(value: OperationAnalytics['emotions'][number]['label']) {
+  if (value === 'positive') {
+    return '正向';
+  }
+  if (value === 'negative') {
+    return '负向';
+  }
+  return '中性';
+}
+
+function conversationStatusText(status: ManagedConversation['status']) {
+  if (status === 'manual_active') {
+    return '人工接管中';
+  }
+
+  if (status === 'manual_required') {
+    return '建议人工关注';
+  }
+
+  return '机器人接待中';
+}
 
 function cx(...items: Array<string | false | undefined>) {
   return items.filter(Boolean).join(' ');
@@ -1934,6 +2010,246 @@ function CustomerPage({ onRefresh }: { onRefresh: () => Promise<void> }) {
   );
 }
 
+function ConversationManagementPage() {
+  const [conversations, setConversations] = useState<ManagedConversation[]>([]);
+  const [selectedId, setSelectedId] = useState<string>();
+  const [messages, setMessages] = useState<ManagedConversationMessage[]>([]);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState('');
+  const selectedIdRef = useRef<string>();
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const selectedConversation = conversations.find((item) => item.id === selectedId);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  async function refreshConversations(nextSelectedId = selectedId) {
+    const result = await loadManagedConversations();
+    setConversations(result.conversations);
+
+    if (!nextSelectedId && result.conversations.length) {
+      setSelectedId(result.conversations[0].id);
+      return result.conversations[0].id;
+    }
+
+    if (nextSelectedId && !result.conversations.some((item) => item.id === nextSelectedId)) {
+      const fallback = result.conversations[0]?.id;
+      setSelectedId(fallback);
+      return fallback;
+    }
+
+    return nextSelectedId;
+  }
+
+  async function refreshMessages(conversationId = selectedId) {
+    if (!conversationId) {
+      setMessages([]);
+      return;
+    }
+
+    const result = await loadManagedConversationMessages(conversationId);
+    setMessages(result.messages);
+  }
+
+  useEffect(() => {
+    refreshConversations().catch(() => setNotice('读取会话列表失败，请确认后端服务已启动。'));
+  }, []);
+
+  useEffect(() => {
+    refreshMessages().catch(() => setNotice('读取聊天记录失败。'));
+  }, [selectedId]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const currentSelectedId = selectedIdRef.current;
+      refreshConversations(currentSelectedId)
+        .then((nextSelectedId) => {
+          if (nextSelectedId) {
+            return refreshMessages(nextSelectedId);
+          }
+          return undefined;
+        })
+        .catch(() => undefined);
+    }, 3000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ block: 'end' });
+  }, [messages]);
+
+  async function refreshAll() {
+    setNotice('');
+    try {
+      const nextSelectedId = await refreshConversations(selectedId);
+      await refreshMessages(nextSelectedId);
+    } catch {
+      setNotice('刷新失败。');
+    }
+  }
+
+  async function updateTakeover(mode: 'takeover' | 'release') {
+    if (!selectedId || busy) {
+      return;
+    }
+
+    setBusy(true);
+    setNotice('');
+    try {
+      if (mode === 'takeover') {
+        await takeoverManagedConversation(selectedId);
+        setNotice('已接管该会话，机器人会暂停自动回复。');
+      } else {
+        await releaseManagedConversation(selectedId);
+        setNotice('已恢复机器人自动接待。');
+      }
+      await refreshConversations(selectedId);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '状态更新失败。');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitManualMessage() {
+    const content = draft.trim();
+    if (!selectedId || !content || busy) {
+      return;
+    }
+
+    setBusy(true);
+    setNotice('');
+    try {
+      await sendManagedConversationMessage(selectedId, content);
+      setDraft('');
+      await refreshConversations(selectedId);
+      await refreshMessages(selectedId);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '发送失败。');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="workspacePage conversationWorkspace">
+      <PageHeader
+        title="对话管理"
+        action={<Stat label="企微会话" value={`${conversations.length}`} tone={conversations.length ? 'good' : 'warn'} />}
+      />
+
+      <div className="conversationConsole">
+        <aside className="conversationList">
+          <div className="conversationListHeader">
+            <strong>会话</strong>
+            <button className="ghostButton compact" onClick={refreshAll} type="button">
+              <RefreshCcw size={14} />
+              刷新
+            </button>
+          </div>
+
+          {conversations.length ? (
+            conversations.map((conversation) => (
+              <button
+                key={conversation.id}
+                className={cx('conversationListItem', selectedId === conversation.id && 'active')}
+                onClick={() => setSelectedId(conversation.id)}
+                type="button"
+              >
+                <span className="conversationAvatar">{conversation.objectType === 'group' ? '群' : '客'}</span>
+                <span className="conversationListBody">
+                  <span>
+                    <strong>{conversation.displayName}</strong>
+                    <small>{formatChatTime(conversation.lastMessageAt)}</small>
+                  </span>
+                  <em>{conversation.lastMessage || '暂无消息'}</em>
+                  <small>{conversationStatusText(conversation.status)}</small>
+                </span>
+              </button>
+            ))
+          ) : (
+            <EmptyState text="还没有企业微信机器人会话。用户发来消息后会出现在这里。" icon={MessagesSquare} />
+          )}
+        </aside>
+
+        <section className="chatPanel">
+          {selectedConversation ? (
+            <>
+              <header className="chatPanelHeader">
+                <div>
+                  <h2>{selectedConversation.displayName}</h2>
+                  <p>
+                    {selectedConversation.objectType === 'group' ? '群聊' : '单聊'} · {selectedConversation.objectId}
+                    {selectedConversation.botId && ` · Bot ${selectedConversation.botId}`}
+                  </p>
+                </div>
+                <div className="chatHeaderActions">
+                  <span className={cx('statusPill', selectedConversation.status)}>{conversationStatusText(selectedConversation.status)}</span>
+                  {selectedConversation.status === 'manual_active' ? (
+                    <button className="ghostButton" disabled={busy} onClick={() => updateTakeover('release')} type="button">
+                      恢复机器人
+                    </button>
+                  ) : (
+                    <button className="primaryButton" disabled={busy} onClick={() => updateTakeover('takeover')} type="button">
+                      人工接管
+                    </button>
+                  )}
+                </div>
+              </header>
+
+              <div className="chatMessages">
+                {messages.length ? (
+                  messages.map((message) => (
+                    <div key={message.id} className={cx('chatBubbleRow', message.role === 'assistant' && 'mine')}>
+                      <div className={cx('chatBubble', message.role === 'assistant' && 'mine')}>
+                        <small>
+                          {message.senderType === 'manual' ? '人工客服' : message.senderType === 'bot' ? '机器人' : '对方'}
+                          <span>{formatChatTime(message.createdAt)}</span>
+                        </small>
+                        <p>{message.content}</p>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <EmptyState text="这个会话暂时没有可展示的聊天记录。" icon={MessagesSquare} />
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+
+              <form
+                className="manualComposer"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  submitManualMessage();
+                }}
+              >
+                <textarea
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  disabled={selectedConversation.status !== 'manual_active' || busy}
+                  placeholder={selectedConversation.status === 'manual_active' ? '以机器人身份发送人工回复' : '先点击“人工接管”再回复'}
+                  rows={3}
+                />
+                <button className="primaryButton" disabled={selectedConversation.status !== 'manual_active' || !draft.trim() || busy} type="submit">
+                  <Send size={15} />
+                  {busy ? '发送中' : '发送'}
+                </button>
+              </form>
+            </>
+          ) : (
+            <EmptyState text="选择一个会话后查看聊天记录。" icon={MessagesSquare} />
+          )}
+
+          {notice && <div className="settingsNotice conversationNotice">{notice}</div>}
+        </section>
+      </div>
+    </section>
+  );
+}
+
 function KnowledgePage({
   suggestions,
   qaItems,
@@ -2629,10 +2945,10 @@ function SettingsPage({
       <section className="panel flat themeSettingsPanel">
         <div className="panelHeader">
           <div>
-            <span className="iconBadge">{themeMode === 'dark' ? <Moon size={18} weight="duotone" /> : <Sun size={18} weight="duotone" />}</span>
+            <span className="iconBadge">{themeMode === 'dark' ? <Moon size={18} weight="duotone" /> : themeMode === 'forest' ? <Leaf size={18} /> : <Sun size={18} weight="duotone" />}</span>
             <h2>界面皮肤</h2>
           </div>
-          <span className="themeCurrentLabel">{themeMode === 'dark' ? '黑色皮肤' : '白色皮肤'}</span>
+          <span className="themeCurrentLabel">{themeLabel(themeMode)}</span>
         </div>
 
         <div className="themeSwitcher" role="radiogroup" aria-label="界面皮肤">
@@ -2651,6 +2967,20 @@ function SettingsPage({
           </button>
 
           <button
+            aria-checked={themeMode === 'mist'}
+            className={cx('themeOption', themeMode === 'mist' && 'active')}
+            onClick={() => onThemeChange('mist')}
+            role="radio"
+            type="button"
+          >
+            <span className="themePreview mist"><Sun size={18} weight="duotone" /></span>
+            <span>
+              <strong>雾蓝皮肤</strong>
+              <small>清爽克制，适合长时间查看数据。</small>
+            </span>
+          </button>
+
+          <button
             aria-checked={themeMode === 'dark'}
             className={cx('themeOption', themeMode === 'dark' && 'active')}
             onClick={() => onThemeChange('dark')}
@@ -2661,6 +2991,20 @@ function SettingsPage({
             <span>
               <strong>黑色皮肤</strong>
               <small>适合夜间使用和低亮度环境。</small>
+            </span>
+          </button>
+
+          <button
+            aria-checked={themeMode === 'forest'}
+            className={cx('themeOption', themeMode === 'forest' && 'active')}
+            onClick={() => onThemeChange('forest')}
+            role="radio"
+            type="button"
+          >
+            <span className="themePreview forest"><Leaf size={18} /></span>
+            <span>
+              <strong>森绿皮肤</strong>
+              <small>低饱和自然色，适合日常客服运营。</small>
             </span>
           </button>
         </div>
@@ -2922,11 +3266,8 @@ function SettingsPage({
 function ChannelsPage() {
   const [settings, setSettings] = useState<WecomSettings>();
   const [enabled, setEnabled] = useState(false);
-  const [corpId, setCorpId] = useState('');
+  const [botId, setBotId] = useState('');
   const [secret, setSecret] = useState('');
-  const [token, setToken] = useState('');
-  const [encodingAesKey, setEncodingAesKey] = useState('');
-  const [openKfid, setOpenKfid] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
 
@@ -2935,13 +3276,10 @@ function ChannelsPage() {
       .then((next) => {
         setSettings(next);
         setEnabled(next.enabled);
-        setCorpId(next.corpId);
-        setOpenKfid(next.openKfid);
+        setBotId(next.botId);
       })
       .catch(() => setNotice('读取企业微信配置失败，请确认后端服务已启动。'));
   }, []);
-
-  const callbackUrl = `${window.location.origin.replace(/:5173$/, ':4000')}${settings?.callbackPath ?? '/api/channels/wecom/kf/callback'}`;
 
   async function submitWecom() {
     setBusy(true);
@@ -2950,17 +3288,12 @@ function ChannelsPage() {
     try {
       const next = await saveWecomSettings({
         enabled,
-        corpId,
-        secret,
-        token,
-        encodingAesKey,
-        openKfid
+        botId,
+        secret
       });
       setSettings(next);
       setSecret('');
-      setToken('');
-      setEncodingAesKey('');
-      setNotice('企业微信客服配置已保存。把回调 URL 填到企业微信后台后即可验证。');
+      setNotice('企业微信智能机器人长连接配置已保存，后端会按 BotID 和 Secret 重新建立连接。');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '保存失败。');
     } finally {
@@ -2980,7 +3313,7 @@ function ChannelsPage() {
           <div className="panelHeader">
             <div>
               <span className="iconBadge"><Link size={18} /></span>
-              <h2>企业微信客服</h2>
+              <h2>企业微信智能机器人</h2>
             </div>
           </div>
 
@@ -2993,56 +3326,29 @@ function ChannelsPage() {
           >
             <label className="checkLine">
               <input checked={enabled} onChange={(event) => setEnabled(event.target.checked)} type="checkbox" />
-              <span>启用企业微信客服接入</span>
+              <span>启用长连接接入</span>
             </label>
 
             <label>
-              <span>CorpID</span>
-              <input value={corpId} onChange={(event) => setCorpId(event.target.value)} placeholder="企业 ID" />
+              <span>BotID</span>
+              <input value={botId} onChange={(event) => setBotId(event.target.value)} placeholder="智能机器人的 BotID" />
             </label>
 
             <label>
-              <span>微信客服 Secret</span>
+              <span>长连接 Secret</span>
               <input
                 value={secret}
                 onChange={(event) => setSecret(event.target.value)}
-                placeholder={settings?.secretSet ? `留空保留：${settings.secretPreview}` : '请输入微信客服 Secret'}
+                placeholder={settings?.secretSet ? `留空保留：${settings.secretPreview}` : '长连接专用 Secret'}
                 type="password"
                 autoComplete="off"
               />
-            </label>
-
-            <label>
-              <span>Token</span>
-              <input
-                value={token}
-                onChange={(event) => setToken(event.target.value)}
-                placeholder={settings?.tokenSet ? `留空保留：${settings.tokenPreview}` : '企业微信回调 Token'}
-                type="password"
-                autoComplete="off"
-              />
-            </label>
-
-            <label>
-              <span>EncodingAESKey</span>
-              <input
-                value={encodingAesKey}
-                onChange={(event) => setEncodingAesKey(event.target.value)}
-                placeholder={settings?.encodingAesKeySet ? `留空保留：${settings.encodingAesKeyPreview}` : '43 位 EncodingAESKey'}
-                type="password"
-                autoComplete="off"
-              />
-            </label>
-
-            <label>
-              <span>默认 open_kfid</span>
-              <input value={openKfid} onChange={(event) => setOpenKfid(event.target.value)} placeholder="客服账号 open_kfid" />
             </label>
 
             <div className="settingsActions">
               <button className="primaryButton" disabled={busy} type="submit">
                 <Check size={16} />
-                {busy ? '保存中' : '保存企业微信配置'}
+                {busy ? '保存中' : '保存长连接配置'}
               </button>
             </div>
           </form>
@@ -3052,32 +3358,303 @@ function ChannelsPage() {
           <div className="panelHeader">
             <div>
               <span className="iconBadge"><Settings2 size={18} /></span>
-              <h2>回调配置</h2>
+              <h2>长连接配置</h2>
             </div>
           </div>
 
           <div className="settingsSummary">
-            <Stat label="CorpID" value={settings?.corpId ? '已填写' : '未填写'} tone={settings?.corpId ? 'good' : 'warn'} />
+            <Stat label="BotID" value={settings?.botId ? '已填写' : '未填写'} tone={settings?.botId ? 'good' : 'warn'} />
             <Stat label="Secret" value={settings?.secretSet ? '已配置' : '未配置'} tone={settings?.secretSet ? 'good' : 'warn'} />
-            <Stat label="Token" value={settings?.tokenSet ? '已配置' : '未配置'} tone={settings?.tokenSet ? 'good' : 'warn'} />
-            <Stat label="EncodingAESKey" value={settings?.encodingAesKeySet ? '已配置' : '未配置'} tone={settings?.encodingAesKeySet ? 'good' : 'warn'} />
             <div className="callout">
               <div>
                 <Link size={17} />
-                <strong>回调 URL</strong>
+                <strong>WebSocket 地址</strong>
               </div>
-              <p>{callbackUrl}</p>
+              <p>{settings?.websocketUrl ?? 'wss://openws.work.weixin.qq.com'}</p>
+            </div>
+            <div className="callout">
+              <div>
+                <KeyRound size={17} />
+                <strong>后台配置</strong>
+              </div>
+              <p>在企业微信智能机器人配置页开启 API 模式，并选择长连接；该模式只使用 BotID 和长连接 Secret，不使用回调 Token 或 EncodingAESKey。</p>
             </div>
             <div className="callout">
               <div>
                 <Database size={17} />
-                <strong>当前 MVP</strong>
+                <strong>当前支持</strong>
               </div>
-              <p>支持微信客服文本消息自动回复。图片、语音、复杂人工坐席分配先不做，避免第一版接入失控。</p>
+              <p>支持 `aibot_msg_callback` 文本消息自动回复，并通过 `aibot_respond_msg` 主动推送流式最终结果。</p>
             </div>
             {notice && <div className="settingsNotice">{notice}</div>}
           </div>
         </aside>
+      </div>
+    </section>
+  );
+}
+
+function AnalyticsToolbar({
+  days,
+  onDaysChange,
+  onRefresh,
+  loading,
+  exportReport
+}: {
+  days: 7 | 30;
+  onDaysChange: (value: 7 | 30) => void;
+  onRefresh: () => void;
+  loading: boolean;
+  exportReport?: () => void;
+}) {
+  return (
+    <div className="analyticsToolbar">
+      <div className="periodControl" aria-label="统计周期">
+        <button className={cx(days === 7 && 'active')} onClick={() => onDaysChange(7)} type="button">近 7 天</button>
+        <button className={cx(days === 30 && 'active')} onClick={() => onDaysChange(30)} type="button">近 30 天</button>
+      </div>
+      <button className="iconButton" aria-label="刷新数据" disabled={loading} onClick={onRefresh} title="刷新数据" type="button">
+        <RefreshCcw size={16} />
+      </button>
+      {exportReport && (
+        <button className="ghostButton analyticsExport" disabled={loading} onClick={exportReport} type="button">
+          <Download size={15} />
+          导出 CSV
+        </button>
+      )}
+    </div>
+  );
+}
+
+function MetricCard({ label, value, note, tone }: { label: string; value: string; note: string; tone?: 'accent' | 'warning' }) {
+  return (
+    <article className={cx('analyticsMetric', tone)}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{note}</small>
+    </article>
+  );
+}
+
+function RankedBars({ items, emptyText }: { items: Array<{ label: string; count: number }>; emptyText: string }) {
+  const max = Math.max(...items.map((item) => item.count), 1);
+  return items.length ? (
+    <div className="rankedBars">
+      {items.map((item) => (
+        <div className="rankedBar" key={item.label}>
+          <span title={item.label}>{item.label}</span>
+          <div><i style={{ width: `${Math.max((item.count / max) * 100, item.count ? 5 : 0)}%` }} /></div>
+          <strong>{item.count}</strong>
+        </div>
+      ))}
+    </div>
+  ) : <EmptyState text={emptyText} icon={ChartDonut} />;
+}
+
+function ConversationAnalysisPage() {
+  const [days, setDays] = useState<7 | 30>(7);
+  const [analytics, setAnalytics] = useState<OperationAnalytics>();
+  const [loading, setLoading] = useState(true);
+  const [notice, setNotice] = useState('');
+
+  async function refresh() {
+    setLoading(true);
+    setNotice('');
+    try {
+      setAnalytics(await loadOperationAnalytics(days));
+    } catch {
+      setNotice('读取对话分析失败，请确认后端服务已启动。');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+  }, [days]);
+
+  return (
+    <section className="workspacePage analyticsPage">
+      <PageHeader
+        title="对话分析"
+        action={<AnalyticsToolbar days={days} exportReport={undefined} loading={loading} onDaysChange={setDays} onRefresh={refresh} />}
+      />
+
+      {notice && <div className="settingsNotice">{notice}</div>}
+
+      <div className="analyticsMetrics">
+        <MetricCard label="咨询会话" value={`${analytics?.overview.conversations ?? 0}`} note={`${days} 天内有客户消息的会话`} />
+        <MetricCard label="客户消息" value={`${analytics?.overview.userMessages ?? 0}`} note="来自企业微信机器人会话" />
+        <MetricCard label="人工待处理" value={`${analytics?.overview.activeManualConversations ?? 0}`} note="当前仍处于人工接管状态" tone="warning" />
+        <MetricCard label="人工介入率" value={formatPercent(analytics?.overview.manualInterventionRate ?? 0)} note="周期内发生人工回复的会话占比" tone="accent" />
+      </div>
+
+      <div className="analyticsGrid analysisTopGrid">
+        <section className="panel analyticsPanel">
+          <div className="panelHeader compactHeader">
+            <div><span className="iconBadge"><ChartDonut size={18} /></span><h2>咨询意图</h2></div>
+            <small>按会话当前识别结果</small>
+          </div>
+          <RankedBars items={analytics?.intents ?? []} emptyText="这个周期还没有可分析的会话。" />
+        </section>
+
+        <section className="panel analyticsPanel">
+          <div className="panelHeader compactHeader">
+            <div><span className="iconBadge"><AlertTriangle size={18} /></span><h2>客户情绪</h2></div>
+            <small>识别结果会随着最近一轮对话更新</small>
+          </div>
+          <div className="emotionList">
+            {(analytics?.emotions ?? []).map((item) => (
+              <div className={cx('emotionRow', item.label)} key={item.label}>
+                <span>{emotionLabel(item.label)}</span><strong>{item.count}</strong>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <div className="analyticsGrid analysisBottomGrid">
+        <section className="panel analyticsPanel">
+          <div className="panelHeader compactHeader">
+            <div><span className="iconBadge"><MessagesSquare size={18} /></span><h2>高频问题</h2></div>
+            <small>相同客户原话合并计数</small>
+          </div>
+          {analytics?.frequentQuestions.length ? (
+            <div className="questionList">
+              {analytics.frequentQuestions.map((item, index) => (
+                <article key={`${item.text}-${index}`}>
+                  <span>{index + 1}</span><p>{item.text}</p><strong>{item.count} 次</strong>
+                </article>
+              ))}
+            </div>
+          ) : <EmptyState text="这个周期暂时没有客户提问。" icon={MessagesSquare} />}
+        </section>
+
+        <section className="panel analyticsPanel">
+          <div className="panelHeader compactHeader">
+            <div><span className="iconBadge"><ClipboardCheck size={18} /></span><h2>知识缺口</h2></div>
+            <small>来自转人工或人工接管的会话</small>
+          </div>
+          {analytics?.knowledgeGaps.length ? (
+            <div className="insightList">
+              {analytics.knowledgeGaps.map((item) => (
+                <article key={item.id}>
+                  <div><strong>{item.intent}</strong><small>{item.displayName} · {formatChatTime(item.updatedAt)}</small></div>
+                  <p>{item.question}</p>
+                </article>
+              ))}
+            </div>
+          ) : <EmptyState text="暂未发现需要补充标准答复的会话。" icon={ClipboardCheck} />}
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function OperationReportsPage() {
+  const [days, setDays] = useState<7 | 30>(7);
+  const [analytics, setAnalytics] = useState<OperationAnalytics>();
+  const [loading, setLoading] = useState(true);
+  const [notice, setNotice] = useState('');
+
+  async function refresh() {
+    setLoading(true);
+    setNotice('');
+    try {
+      setAnalytics(await loadOperationAnalytics(days));
+    } catch {
+      setNotice('读取运营报表失败，请确认后端服务已启动。');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+  }, [days]);
+
+  function exportReport() {
+    if (!analytics) {
+      return;
+    }
+
+    const quote = (value: string | number) => `"${String(value).replace(/"/g, '""')}"`;
+    const rows = [
+      ['日期', '客户消息', '机器人回复', '人工回复'],
+      ...analytics.daily.map((item) => [item.day, item.userMessages, item.botMessages, item.manualMessages])
+    ];
+    const blob = new Blob([`\ufeff${rows.map((row) => row.map(quote).join(',')).join('\n')}`], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `ShopMate-运营报表-${analytics.range.days}天-${analytics.range.generatedAt.slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const maxDailyMessages = Math.max(...(analytics?.daily.map((item) => item.userMessages) ?? []), 1);
+
+  return (
+    <section className="workspacePage analyticsPage">
+      <PageHeader
+        title="运营报表"
+        action={<AnalyticsToolbar days={days} exportReport={exportReport} loading={loading} onDaysChange={setDays} onRefresh={refresh} />}
+      />
+
+      {notice && <div className="settingsNotice">{notice}</div>}
+
+      <div className="analyticsMetrics">
+        <MetricCard label="咨询会话" value={`${analytics?.overview.conversations ?? 0}`} note="周期内发起咨询的对象数" />
+        <MetricCard label="机器人回复" value={`${analytics?.overview.botMessages ?? 0}`} note="自动回复消息量" tone="accent" />
+        <MetricCard label="自动回复率" value={formatPercent(analytics?.overview.autoReplyRate ?? 0)} note="机器人回复占全部已回复消息" tone="accent" />
+        <MetricCard label="人工回复" value={`${analytics?.overview.manualMessages ?? 0}`} note={`${analytics?.overview.manuallyHandledConversations ?? 0} 个会话已人工介入`} tone="warning" />
+      </div>
+
+      <section className="panel analyticsPanel reportTrendPanel">
+        <div className="panelHeader compactHeader">
+          <div><span className="iconBadge"><ChartDonut size={18} /></span><h2>每日咨询趋势</h2></div>
+          <small>柱高表示当天客户消息量</small>
+        </div>
+        <div className="dailyBars">
+          {(analytics?.daily ?? []).map((item) => (
+            <div className="dailyBar" key={item.day}>
+              <strong>{item.userMessages}</strong>
+              <div className="dailyBarTrack"><i style={{ height: `${Math.max((item.userMessages / maxDailyMessages) * 100, item.userMessages ? 7 : 0)}%` }} /></div>
+              <span>{formatAnalyticsDay(item.day)}</span>
+            </div>
+          ))}
+        </div>
+        <div className="reportLegend"><span><i className="user" />客户消息</span><span><i className="bot" />机器人 {analytics?.overview.botMessages ?? 0}</span><span><i className="manual" />人工 {analytics?.overview.manualMessages ?? 0}</span></div>
+      </section>
+
+      <div className="analyticsGrid reportBottomGrid">
+        <section className="panel analyticsPanel">
+          <div className="panelHeader compactHeader">
+            <div><span className="iconBadge"><MessagesSquare size={18} /></span><h2>处理构成</h2></div>
+            <small>回复消息按处理方统计</small>
+          </div>
+          <RankedBars items={[
+            { label: '机器人回复', count: analytics?.overview.botMessages ?? 0 },
+            { label: '人工回复', count: analytics?.overview.manualMessages ?? 0 }
+          ]} emptyText="这个周期还没有回复记录。" />
+        </section>
+
+        <section className="panel analyticsPanel">
+          <div className="panelHeader compactHeader">
+            <div><span className="iconBadge"><AlertTriangle size={18} /></span><h2>待人工会话</h2></div>
+            <small>目前处于人工接管状态</small>
+          </div>
+          {analytics?.pendingManual.length ? (
+            <div className="insightList compact">
+              {analytics.pendingManual.map((item) => (
+                <article key={item.id}>
+                  <div><strong>{item.displayName}</strong><small>{formatChatTime(item.updatedAt)}</small></div>
+                  <p>{item.lastMessage || '暂时没有最新消息'}</p>
+                </article>
+              ))}
+            </div>
+          ) : <EmptyState text="当前没有正在人工接管的会话。" icon={ClipboardCheck} />}
+        </section>
       </div>
     </section>
   );
@@ -3094,7 +3671,7 @@ function PlaceholderPage({
   knowledgeCount: number;
   suggestions: KnowledgeSuggestion[];
 }) {
-  const content: Record<Exclude<WorkspaceTab, 'agent' | 'customer' | 'knowledge' | 'settings' | 'channels'>, {
+  const content: Record<Exclude<WorkspaceTab, 'agent' | 'customer' | 'conversations' | 'knowledge' | 'settings' | 'channels'>, {
     title: string;
     description: string;
     icon: PhosphorIcon;
@@ -3114,7 +3691,7 @@ function PlaceholderPage({
     }
   };
 
-  const item = content[tab as Exclude<WorkspaceTab, 'agent' | 'customer' | 'knowledge' | 'settings' | 'channels'>];
+  const item = content[tab as Exclude<WorkspaceTab, 'agent' | 'customer' | 'conversations' | 'knowledge' | 'settings' | 'channels'>];
   const Icon = item.icon;
 
   return (
@@ -3148,7 +3725,8 @@ export function App() {
       return 'light';
     }
 
-    return window.localStorage.getItem('shopmate-theme') === 'dark' ? 'dark' : 'light';
+    const savedTheme = window.localStorage.getItem('shopmate-theme');
+    return savedTheme === 'dark' || savedTheme === 'mist' || savedTheme === 'forest' ? savedTheme : 'light';
   });
   const [suggestions, setSuggestions] = useState<KnowledgeSuggestion[]>([]);
   const [products, setProducts] = useState<ProductKnowledge[]>([]);
@@ -3224,6 +3802,10 @@ export function App() {
     window.localStorage.setItem('shopmate-theme', themeMode);
   }, [themeMode]);
 
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [activeTab]);
+
   return (
     <main className="productShell">
       <aside className="sidebar">
@@ -3275,6 +3857,7 @@ export function App() {
           />
         )}
         {activeTab === 'customer' && <CustomerPage onRefresh={refreshMeta} />}
+        {activeTab === 'conversations' && <ConversationManagementPage />}
         {activeTab === 'knowledge' && (
           <KnowledgePage
             suggestions={suggestions}
@@ -3290,14 +3873,8 @@ export function App() {
         )}
         {activeTab === 'settings' && <SettingsPage themeMode={themeMode} onThemeChange={setThemeMode} />}
         {activeTab === 'channels' && <ChannelsPage />}
-        {activeTab !== 'agent' && activeTab !== 'customer' && activeTab !== 'knowledge' && activeTab !== 'settings' && activeTab !== 'channels' && (
-          <PlaceholderPage
-            tab={activeTab}
-            productCount={productCount}
-            knowledgeCount={knowledgeCount}
-            suggestions={suggestions}
-          />
-        )}
+        {activeTab === 'analysis' && <ConversationAnalysisPage />}
+        {activeTab === 'reports' && <OperationReportsPage />}
       </section>
     </main>
   );

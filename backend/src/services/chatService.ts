@@ -9,6 +9,35 @@ import { searchWeb, type WebSource } from './webSearchService.js';
 import type { ChatMessage, Emotion, Intent, KnowledgeChunk } from '../types.js';
 
 const now = () => new Date().toISOString();
+const MAX_SERVER_HISTORY_MESSAGES = 16;
+
+function loadConversationHistory(conversationId: string, limit = MAX_SERVER_HISTORY_MESSAGES): ChatMessage[] {
+  const rows = db.prepare(`
+    SELECT role, content
+    FROM messages
+    WHERE conversation_id = ?
+      AND role IN ('user', 'assistant')
+      AND content IS NOT NULL
+      AND trim(content) != ''
+    ORDER BY created_at DESC, rowid DESC
+    LIMIT ?
+  `).all(conversationId, limit) as Array<{ role: ChatMessage['role']; content: string }>;
+
+  return rows
+    .reverse()
+    .map((row) => ({
+      role: row.role,
+      content: row.content
+    }));
+}
+
+function resolveHistory(history: ChatMessage[], conversationId?: string) {
+  if (history.length || !conversationId) {
+    return history;
+  }
+
+  return loadConversationHistory(conversationId);
+}
 
 function buildAnswer(input: string, intent: Intent, emotion: Emotion, matches: KnowledgeChunk[], confidence: number) {
   if (matches.length === 0 || confidence < 0.34) {
@@ -154,14 +183,15 @@ async function prepareChat(input: string, history: ChatMessage[]) {
 }
 
 export async function handleChat(input: string, history: ChatMessage[] = [], conversationId?: string) {
-  const { intent, emotion, matches, confidence, localAnswer, manualRequired, webRoute, webSources, webSearchError, webSearchNote } = await prepareChat(input, history);
+  const resolvedHistory = resolveHistory(history, conversationId);
+  const { intent, emotion, matches, confidence, localAnswer, manualRequired, webRoute, webSources, webSearchError, webSearchNote } = await prepareChat(input, resolvedHistory);
   let answer = localAnswer;
   let answerSource: 'llm' | 'local' = 'local';
   let model: string | undefined;
   let fallbackReason = getLlmSettings().apiKey ? '' : '未配置大模型 API Key，已使用本地规则兜底。';
 
   try {
-    const llmReply = await generateCustomerReply(input, history, intent, emotion, matches, confidence, webSources, webSearchNote);
+    const llmReply = await generateCustomerReply(input, resolvedHistory, intent, emotion, matches, confidence, webSources, webSearchNote);
     if (llmReply) {
       answer = llmReply.answer;
       model = llmReply.model;
@@ -195,7 +225,7 @@ export async function handleChat(input: string, history: ChatMessage[] = [], con
     webSearchRouteSource: webRoute.source,
     webSources,
     webSearchError,
-    history
+    history: resolvedHistory
   };
 }
 
@@ -205,14 +235,15 @@ export async function handleChatStream(
   conversationId: string | undefined,
   onChunk: (chunk: string) => void
 ) {
-  const { intent, emotion, matches, confidence, localAnswer, manualRequired, webRoute, webSources, webSearchError, webSearchNote } = await prepareChat(input, history);
+  const resolvedHistory = resolveHistory(history, conversationId);
+  const { intent, emotion, matches, confidence, localAnswer, manualRequired, webRoute, webSources, webSearchError, webSearchNote } = await prepareChat(input, resolvedHistory);
   let answer = '';
   let answerSource: 'llm' | 'local' = 'local';
   let model: string | undefined;
   let fallbackReason = getLlmSettings().apiKey ? '' : '未配置大模型 API Key，已使用本地规则兜底。';
 
   try {
-    for await (const chunk of streamCustomerReply(input, history, intent, emotion, matches, confidence, webSources, webSearchNote)) {
+    for await (const chunk of streamCustomerReply(input, resolvedHistory, intent, emotion, matches, confidence, webSources, webSearchNote)) {
       answer += chunk;
       answerSource = 'llm';
       model = getLlmSettings().model;
@@ -251,6 +282,6 @@ export async function handleChatStream(
     webSearchRouteSource: webRoute.source,
     webSources,
     webSearchError,
-    history
+    history: resolvedHistory
   };
 }

@@ -43,6 +43,7 @@ export type PublicSearchSettings = {
 
 export type WecomSettings = {
   enabled: boolean;
+  botId: string;
   corpId: string;
   secret: string;
   token: string;
@@ -52,15 +53,11 @@ export type WecomSettings = {
 
 export type PublicWecomSettings = {
   enabled: boolean;
-  corpId: string;
+  botId: string;
   secretSet: boolean;
   secretPreview: string;
-  tokenSet: boolean;
-  tokenPreview: string;
-  encodingAesKeySet: boolean;
-  encodingAesKeyPreview: string;
-  openKfid: string;
-  callbackPath: string;
+  websocketUrl: string;
+  connectionMode: 'long_connection';
 };
 
 export type SystemPromptSettings = {
@@ -239,8 +236,9 @@ export function getWecomSettings(): WecomSettings {
 
   return {
     enabled: enabled === undefined ? false : enabled === 'true',
+    botId: readSetting('wecom.botId') || process.env.WECOM_BOT_ID || process.env.WECOM_AIBOT_ID || '',
     corpId: readSetting('wecom.corpId') || process.env.WECOM_CORP_ID || '',
-    secret: readSetting('wecom.secret') || process.env.WECOM_SECRET || '',
+    secret: readSetting('wecom.secret') || process.env.WECOM_AIBOT_SECRET || process.env.WECOM_SECRET || '',
     token: readSetting('wecom.token') || process.env.WECOM_TOKEN || '',
     encodingAesKey: readSetting('wecom.encodingAesKey') || process.env.WECOM_ENCODING_AES_KEY || '',
     openKfid: readSetting('wecom.openKfid') || process.env.WECOM_OPEN_KFID || ''
@@ -252,20 +250,17 @@ export function getPublicWecomSettings(): PublicWecomSettings {
 
   return {
     enabled: settings.enabled,
-    corpId: settings.corpId,
+    botId: settings.botId,
     secretSet: Boolean(settings.secret),
     secretPreview: previewSecret(settings.secret),
-    tokenSet: Boolean(settings.token),
-    tokenPreview: previewSecret(settings.token),
-    encodingAesKeySet: Boolean(settings.encodingAesKey),
-    encodingAesKeyPreview: previewSecret(settings.encodingAesKey),
-    openKfid: settings.openKfid,
-    callbackPath: '/api/channels/wecom/kf/callback'
+    websocketUrl: 'wss://openws.work.weixin.qq.com',
+    connectionMode: 'long_connection'
   };
 }
 
 export function updateWecomSettings(input: {
   enabled?: boolean;
+  botId?: string;
   corpId?: string;
   secret?: string;
   token?: string;
@@ -276,11 +271,16 @@ export function updateWecomSettings(input: {
     writeSetting('wecom.enabled', String(input.enabled));
   }
 
+  const botId = input.botId?.trim();
   const corpId = input.corpId?.trim();
   const secret = input.secret?.trim();
   const token = input.token?.trim();
   const encodingAesKey = input.encodingAesKey?.trim();
   const openKfid = input.openKfid?.trim();
+
+  if (botId) {
+    writeSetting('wecom.botId', botId);
+  }
 
   if (corpId) {
     writeSetting('wecom.corpId', corpId);

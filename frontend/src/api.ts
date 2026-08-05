@@ -64,6 +64,49 @@ export type ChatMessage = {
   content: string;
 };
 
+export type ManagedConversation = {
+  id: string;
+  channel: string;
+  objectId: string;
+  objectType: 'single' | 'group';
+  displayName: string;
+  botId: string;
+  status: 'bot' | 'manual_required' | 'manual_active';
+  lastMessage: string;
+  lastMessageRole: string;
+  lastMessageSender: string;
+  lastMessageAt: string;
+};
+
+export type ManagedConversationMessage = {
+  id: string;
+  externalMessageId: string;
+  role: 'user' | 'assistant';
+  senderType: 'user' | 'bot' | 'manual';
+  content: string;
+  createdAt: string;
+};
+
+export type OperationAnalytics = {
+  range: { days: number; since: string; generatedAt: string };
+  overview: {
+    conversations: number;
+    userMessages: number;
+    botMessages: number;
+    manualMessages: number;
+    manuallyHandledConversations: number;
+    activeManualConversations: number;
+    autoReplyRate: number;
+    manualInterventionRate: number;
+  };
+  daily: Array<{ day: string; userMessages: number; botMessages: number; manualMessages: number }>;
+  intents: Array<{ label: string; count: number }>;
+  emotions: Array<{ label: 'positive' | 'neutral' | 'negative'; count: number }>;
+  frequentQuestions: Array<{ text: string; count: number; lastAt: string }>;
+  pendingManual: Array<{ id: string; displayName: string; objectType: 'single' | 'group'; lastMessage: string; updatedAt: string }>;
+  knowledgeGaps: Array<{ id: string; displayName: string; intent: string; question: string; updatedAt: string }>;
+};
+
 export type AgentTraceStep = {
   label: string;
   detail: string;
@@ -171,15 +214,11 @@ export type SearchSettings = {
 
 export type WecomSettings = {
   enabled: boolean;
-  corpId: string;
+  botId: string;
   secretSet: boolean;
   secretPreview: string;
-  tokenSet: boolean;
-  tokenPreview: string;
-  encodingAesKeySet: boolean;
-  encodingAesKeyPreview: string;
-  openKfid: string;
-  callbackPath: string;
+  websocketUrl: string;
+  connectionMode: 'long_connection';
 };
 
 export type SystemPromptSettings = {
@@ -204,6 +243,37 @@ export function sendChat(message: string, conversationId?: string, history: Chat
   return request<ChatResponse>('/api/chat', {
     method: 'POST',
     body: JSON.stringify({ message, conversationId, history })
+  });
+}
+
+export function loadManagedConversations() {
+  return request<{ conversations: ManagedConversation[] }>('/api/conversations');
+}
+
+export function loadOperationAnalytics(days: 7 | 30) {
+  return request<OperationAnalytics>(`/api/analytics?days=${days}`);
+}
+
+export function loadManagedConversationMessages(conversationId: string) {
+  return request<{ messages: ManagedConversationMessage[] }>(`/api/conversations/${encodeURIComponent(conversationId)}/messages`);
+}
+
+export function takeoverManagedConversation(conversationId: string) {
+  return request<{ conversation?: ManagedConversation }>(`/api/conversations/${encodeURIComponent(conversationId)}/takeover`, {
+    method: 'POST'
+  });
+}
+
+export function releaseManagedConversation(conversationId: string) {
+  return request<{ conversation?: ManagedConversation }>(`/api/conversations/${encodeURIComponent(conversationId)}/release`, {
+    method: 'POST'
+  });
+}
+
+export function sendManagedConversationMessage(conversationId: string, content: string) {
+  return request<{ message: ManagedConversationMessage; conversation?: ManagedConversation }>(`/api/conversations/${encodeURIComponent(conversationId)}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ content })
   });
 }
 
@@ -500,11 +570,8 @@ export function loadWecomSettings() {
 
 export function saveWecomSettings(input: {
   enabled: boolean;
-  corpId: string;
+  botId: string;
   secret?: string;
-  token?: string;
-  encodingAesKey?: string;
-  openKfid: string;
 }) {
   return request<WecomSettings>('/api/settings/wecom', {
     method: 'PUT',
