@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { db } from '../db/database.js';
+import { deleteProductsByIds } from '../services/dataMaintenanceService.js';
 
 const router = Router();
 const now = () => new Date().toISOString();
@@ -164,7 +165,7 @@ router.delete('/:id', (req, res) => {
     return;
   }
 
-  db.prepare('DELETE FROM products WHERE id = ?').run(req.params.id);
+  deleteProductsByIds([req.params.id]);
 
   res.json({ deleted: mapProductRow(row) });
 });

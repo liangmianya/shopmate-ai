@@ -1039,9 +1039,13 @@ button.skillCurrentCard {
 
 .settingsGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr)) 340px;
-  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
   align-items: start;
+}
+
+.settingsStatusPanel {
+  grid-column: 1 / -1;
 }
 
 .systemPromptPanel {
@@ -1112,6 +1116,62 @@ button.skillCurrentCard {
   font-weight: 650;
 }
 
+.settingsSwitchLine {
+  flex: 0 0 auto;
+  min-height: 30px;
+  position: relative;
+  display: inline-grid !important;
+  grid-template-columns: 38px;
+  align-items: center;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.settingsSwitchLine input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.settingsSwitchLine i {
+  width: 38px;
+  height: 22px;
+  position: relative;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.settingsSwitchLine i::after {
+  content: "";
+  width: 16px;
+  height: 16px;
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  box-shadow: 0 1px 3px rgba(20, 20, 18, 0.16);
+  transition: transform 0.15s ease;
+}
+
+.settingsSwitchLine.active i {
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1px transparent;
+}
+
+.settingsSwitchLine.active i::after {
+  transform: translateX(16px);
+}
+
+.settingsSwitchLine:focus-within {
+  outline: 3px solid rgba(47, 118, 78, 0.14);
+  outline-offset: 3px;
+}
+
 .settingsActions {
   display: flex;
   align-items: center;
@@ -1133,9 +1193,22 @@ button.skillCurrentCard {
 }
 
 .settingsSummary {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
+}
+
+.settingsSummary .stat {
+  min-height: 72px;
+}
+
+.settingsSummary .callout,
+.settingsSummary .settingsNotice {
+  grid-column: 1 / -1;
+}
+
+.settingsSummary .callout {
+  margin-bottom: 0;
 }
 
 .settingsNotice {
@@ -1836,7 +1909,121 @@ button.skillCurrentCard {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
+}
+
+.libraryActions,
+.maintenanceActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.selectAllButton,
+.itemSelectControl {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted, #5f5f5f);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.selectAllButton {
+  width: 76px;
+  height: 30px;
+  flex: 0 0 76px;
+  gap: 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #3f473f;
+}
+
+.selectAllButton:hover:not(:disabled),
+.selectAllButton.active {
+  border-color: #cfd8ce;
+  background: #ffffff;
+  color: #111111;
+}
+
+.selectAllButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.selectAllIcon {
+  width: 15px;
+  height: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid currentColor;
+  border-radius: 4px;
+}
+
+.itemSelectControl input {
+  width: 16px;
+  height: 16px;
+  accent-color: #111111;
+  cursor: pointer;
+}
+
+.itemSelectControl {
+  flex: 0 0 auto;
+  min-width: 16px;
+  min-height: 32px;
+  justify-self: start;
+  padding-top: 3px;
+}
+
+.dataMaintenancePanel {
+  margin-top: 16px;
+}
+
+.maintenanceStats {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.maintenanceActions {
+  margin-top: 14px;
+  justify-content: flex-start;
+}
+
+.libraryActions .ghostButton,
+.maintenanceActions .ghostButton {
+  width: auto;
+  min-width: 0;
+  padding: 0 13px;
+}
+
+.libraryBatchActions {
+  display: flex;
+  align-items: center;
+}
+
+.batchDeleteSlot {
+  width: 132px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.batchDeleteButton {
+  width: auto !important;
+  min-width: 112px !important;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.batchDeleteButton.hidden {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .libraryTabs {
@@ -1864,9 +2051,16 @@ button.skillCurrentCard {
 
 .knowledgeLibrary {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 18px;
   align-items: start;
+}
+
+.libraryWorkbench {
+  min-width: 0;
+  min-height: 560px;
+  display: flex;
+  flex-direction: column;
 }
 
 .libraryMain,
@@ -1874,6 +2068,28 @@ button.skillCurrentCard {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+  align-content: start;
+  flex: 1;
+  min-height: 0;
+}
+
+.libraryMain > .empty,
+.productKnowledgeGrid > .empty {
+  grid-column: 1 / -1;
+  min-height: 460px;
+  width: 100%;
+}
+
+.libraryMain > .empty svg,
+.productKnowledgeGrid > .empty svg {
+  width: 44px;
+  height: 44px;
+}
+
+.libraryMain > .empty .emptyIcon,
+.productKnowledgeGrid > .empty .emptyIcon {
+  width: 76px;
+  height: 76px;
 }
 
 .librarySide {
@@ -1889,22 +2105,23 @@ button.skillCurrentCard {
 }
 
 .knowledgeItemHeader {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 32px;
+  align-items: start;
+  gap: 12px;
   margin-bottom: 8px;
 }
 
+.knowledgeItemTitle,
 .knowledgeItemHeader > div {
   min-width: 0;
   display: grid;
   gap: 6px;
+  justify-items: start;
 }
 
 .knowledgeItemHeader span,
-.tagRow span,
-.productFacts span {
+.tagRow span {
   width: fit-content;
   min-height: 22px;
   display: inline-flex;
@@ -1922,6 +2139,13 @@ button.skillCurrentCard {
   min-width: 0;
   color: #111111;
   line-height: 1.4;
+}
+
+.productKnowledgeItem {
+  min-height: 154px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .iconButton {
@@ -1956,6 +2180,7 @@ button.skillCurrentCard {
 
 .knowledgeItem p,
 .productKnowledgeItem p {
+  margin: 0;
   color: #4d4d4d;
   font-size: 13px;
   line-height: 1.58;
@@ -1970,7 +2195,46 @@ button.skillCurrentCard {
 }
 
 .productFacts {
-  margin: 0 0 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.productFacts span {
+  min-width: 0;
+  min-height: 46px;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  border-radius: 8px;
+  background: #f5f5f2;
+  padding: 7px 9px;
+}
+
+.productFacts small {
+  margin: 0;
+  color: #737373;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.productFacts strong {
+  overflow: hidden;
+  color: #111111;
+  font-size: 13px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.productCardFooter {
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: auto;
 }
 
 .productLink {
@@ -1979,7 +2243,8 @@ button.skillCurrentCard {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin-top: 8px;
+  flex: 0 0 auto;
+  margin-top: 0;
   color: #111111;
   font-size: 12px;
   font-weight: 650;
@@ -2057,11 +2322,15 @@ button.skillCurrentCard {
   line-height: 1.5;
 }
 
-.productKnowledgeItem small {
+.productCardFooter > small {
+  min-width: 0;
   display: block;
-  margin-top: 10px;
+  margin-top: 0;
   color: #737373;
   line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .retrievalItem div {
@@ -2084,6 +2353,29 @@ button.skillCurrentCard {
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.librarySide > .panel {
+  position: sticky;
+  top: 16px;
+}
+
+.suggestionPanelActions {
+  display: grid;
+  grid-template-columns: 76px 132px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.suggestionPanelActions.idle {
+  grid-template-columns: 76px;
+}
+
+.suggestionPanelActions .ghostButton {
+  width: auto;
+  min-width: 0;
+  padding: 0 12px;
 }
 
 .suggestionHeader > div {
@@ -2117,6 +2409,11 @@ button.skillCurrentCard {
 
 .suggestionExpandButton svg.open {
   transform: rotate(90deg);
+}
+
+.suggestionSelectControl {
+  min-height: 24px;
+  padding-top: 4px;
 }
 
 .suggestionTitle {
@@ -2167,14 +2464,35 @@ button.skillCurrentCard {
   min-height: 160px;
   display: grid;
   place-items: center;
-  gap: 8px;
+  align-content: center;
+  gap: 12px;
   padding: 18px;
-  border: 1px dashed #d4d4cf;
+  border: 1px dashed #d0d8cf;
   border-radius: 8px;
-  background: #fafafa;
-  color: #737373;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(250, 252, 250, 0.92)),
+    #fafafa;
+  color: #5f675f;
   text-align: center;
   line-height: 1.5;
+}
+
+.emptyIcon {
+  width: 68px;
+  height: 68px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #dfe6dd;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #5c665d;
+}
+
+.empty strong {
+  color: #5f675f;
+  font-size: 14px;
+  font-weight: 650;
 }
 
 .inspectorSection .empty {
@@ -3042,8 +3360,16 @@ input:focus {
     grid-template-columns: 1fr;
   }
 
+  .settingsSummary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .skillSidebar {
     position: static;
+  }
+
+  .maintenanceStats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
 }
@@ -3074,6 +3400,44 @@ input:focus {
   .libraryToolbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .libraryActions,
+  .maintenanceActions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .maintenanceActions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .maintenanceActions button {
+    width: 100%;
+    justify-content: center;
+    white-space: normal;
+  }
+
+  .maintenanceStats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settingsSummary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .libraryWorkbench {
+    min-height: auto;
+  }
+
+  .libraryMain > .empty,
+  .productKnowledgeGrid > .empty {
+    min-height: 280px;
+  }
+
+  .librarySide > .panel {
+    position: static;
   }
 
   .agentExecutionTimeline,
@@ -3324,6 +3688,30 @@ input:focus {
   border-color: transparent;
   background: transparent;
   color: var(--text-muted);
+}
+
+:root[data-theme="dark"] .selectAllButton {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .selectAllButton:hover:not(:disabled),
+:root[data-theme="dark"] .selectAllButton.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+:root[data-theme="dark"] .productFacts span,
+:root[data-theme="dark"] .emptyIcon {
+  border-color: var(--line-soft);
+  background: var(--surface-control);
+}
+
+:root[data-theme="dark"] .productFacts strong,
+:root[data-theme="dark"] .empty strong {
+  color: var(--text);
 }
 
 :root[data-theme="dark"] .skillCard:hover,

@@ -1,11 +1,8 @@
 import { nanoid } from 'nanoid';
 import { db } from '../db/database.js';
-import { detectEmotion, detectIntent, intentLabel } from './intentService.js';
-import { generateCustomerReply, streamCustomerReply } from './llmService.js';
-import { getLlmSettings } from './settingsService.js';
+import { classifyCustomerMessage, intentLabel } from './intentService.js';
+import { generateCustomerAgentReply } from './customerAgentService.js';
 import { calculateConfidence, searchKnowledgeBaseHybrid } from './ragService.js';
-import { routeWebSearch, validateWebSearchResults } from './searchRouterService.js';
-import { searchWeb, type WebSource } from './webSearchService.js';
 import type { ChatMessage, Emotion, Intent, KnowledgeChunk } from '../types.js';
 
 const now = () => new Date().toISOString();
@@ -37,50 +34,6 @@ function resolveHistory(history: ChatMessage[], conversationId?: string) {
   }
 
   return loadConversationHistory(conversationId);
-}
-
-function buildAnswer(input: string, intent: Intent, emotion: Emotion, matches: KnowledgeChunk[], confidence: number) {
-  if (matches.length === 0 || confidence < 0.34) {
-    return '我可以先按一般电商选购思路给你参考。请补充商品用途、预算、偏好的规格或款式，以及最在意的因素，我再结合店铺资料帮你缩小选择范围。';
-  }
-
-  const facts = matches.slice(0, 3).map((item) => item.content);
-
-  if (intent === 'complaint') {
-    return `理解你的着急，我先帮你按售后流程处理。${facts.join(' ')} 建议你补充订单号和清晰照片，我会把当前情况生成转人工摘要，方便人工客服继续核实。`;
-  }
-
-  if (intent === 'after_sale') {
-    return `${facts.join(' ')} 如果你的情况涉及质量问题，建议先准备订单号和清晰照片，这样处理会更快。`;
-  }
-
-  if (intent === 'size_recommendation') {
-    return `${facts.join(' ')} 结合你的描述，建议优先确认商品规格表、使用场景和舒适度；不确定时可先补充你的常用规格和具体需求。`;
-  }
-
-  if (intent === 'product_recommendation') {
-    return `${facts.join(' ')} 你可以结合使用场景、预算、核心偏好和库存情况选择；把这些信息补充给我后，我可以继续帮你比较。`;
-  }
-
-  if (emotion === 'negative') {
-    return `我理解你的顾虑。${facts.join(' ')} 你可以把具体情况再说细一点，我会先按现有规则帮你判断下一步怎么处理。`;
-  }
-
-  return facts.join(' ');
-}
-
-function shouldTransfer(intent: Intent, emotion: Emotion, confidence: number, input: string) {
-  const explicitManual = ['人工', '转人工', '转接', '真人', '客服接'];
-  const highRiskAfterSale = ['投诉', '赔偿', '赔付', '质量问题', '开胶', '断底', '严重脱线', '假货'];
-  const unresolvedComplaint = emotion === 'negative' && highRiskAfterSale.some((word) => input.includes(word));
-
-  return (
-    intent === 'complaint' ||
-    intent === 'manual_transfer' ||
-    explicitManual.some((word) => input.includes(word)) ||
-    unresolvedComplaint ||
-    confidence < 0.18
-  );
 }
 
 function buildManualSummary(input: string, answer: string, intent: Intent, emotion: Emotion, matches: KnowledgeChunk[]) {
@@ -143,65 +96,26 @@ function saveChatResult({
 }
 
 async function prepareChat(input: string, history: ChatMessage[]) {
-  const intent = detectIntent(input);
-  const emotion = detectEmotion(input);
+  const classification = await classifyCustomerMessage(input, history);
+  const { intent, emotion } = classification;
   const matches = await searchKnowledgeBaseHybrid(input, intent, 5);
   const confidence = calculateConfidence(matches);
-  const localAnswer = buildAnswer(input, intent, emotion, matches, confidence);
-  const manualRequired = shouldTransfer(intent, emotion, confidence, input);
-  const webRoute = await routeWebSearch(input, history, confidence, intent, matches);
-  let webSources: WebSource[] = [];
-  let webSearchError = '';
-  let webSearchNote = webRoute.needWebSearch ? `联网搜索计划：${webRoute.reason}；搜索词：${webRoute.query}` : webRoute.reason;
-
-  if (webRoute.needWebSearch) {
-    try {
-      const rawSources = await searchWeb(webRoute.query || input);
-      const validation = await validateWebSearchResults(input, webRoute, rawSources);
-      webSources = validation.sources;
-      webSearchNote = validation.sources.length
-        ? `${webSearchNote}；${validation.note}`
-        : `已尝试联网搜索，但没有可用于回答的可靠结果。${validation.note}`;
-    } catch (error) {
-      webSearchError = error instanceof Error ? error.message : '联网搜索失败';
-      webSearchNote = `已尝试联网搜索，但搜索失败：${webSearchError}`;
-    }
-  }
+  const manualRequired = classification.manualRequired || confidence < 0.18;
 
   return {
     intent,
     emotion,
     matches,
     confidence,
-    localAnswer,
-    manualRequired,
-    webRoute,
-    webSources,
-    webSearchError,
-    webSearchNote
+    manualRequired
   };
 }
 
 export async function handleChat(input: string, history: ChatMessage[] = [], conversationId?: string) {
   const resolvedHistory = resolveHistory(history, conversationId);
-  const { intent, emotion, matches, confidence, localAnswer, manualRequired, webRoute, webSources, webSearchError, webSearchNote } = await prepareChat(input, resolvedHistory);
-  let answer = localAnswer;
-  let answerSource: 'llm' | 'local' = 'local';
-  let model: string | undefined;
-  let fallbackReason = getLlmSettings().apiKey ? '' : '未配置大模型 API Key，已使用本地规则兜底。';
-
-  try {
-    const llmReply = await generateCustomerReply(input, resolvedHistory, intent, emotion, matches, confidence, webSources, webSearchNote);
-    if (llmReply) {
-      answer = llmReply.answer;
-      model = llmReply.model;
-      answerSource = 'llm';
-      fallbackReason = '';
-    }
-  } catch (error) {
-    fallbackReason = error instanceof Error ? error.message : '大模型调用失败，已使用本地规则兜底。';
-  }
-
+  const { intent, emotion, matches, confidence, manualRequired } = await prepareChat(input, resolvedHistory);
+  const agentReply = await generateCustomerAgentReply(input, resolvedHistory, intent, emotion, confidence);
+  const answer = agentReply.answer;
   const saved = saveChatResult({ input, answer, intent, emotion, matches, manualRequired, conversationId });
 
   return {
@@ -214,17 +128,18 @@ export async function handleChat(input: string, history: ChatMessage[] = [], con
     manualRequired,
     manualSummary: saved.summary,
     retrieved: matches,
-    answerSource,
-    model,
-    fallbackReason,
-    webSearchUsed: webSources.length > 0,
-    webSearchAttempted: webRoute.needWebSearch,
-    webSearchQuery: webRoute.needWebSearch ? webRoute.query : '',
-    webSearchReason: webRoute.reason,
-    webSearchScope: webRoute.scope,
-    webSearchRouteSource: webRoute.source,
-    webSources,
-    webSearchError,
+    answerSource: 'llm' as const,
+    model: agentReply.model,
+    fallbackReason: '',
+    webSearchUsed: agentReply.webSources.length > 0,
+    webSearchAttempted: agentReply.webSearchAttempted,
+    webSearchQuery: agentReply.webSearchQuery,
+    webSearchReason: agentReply.webSearchReason,
+    webSearchScope: agentReply.webSearchAttempted ? 'external_public_info' : 'local_business_knowledge',
+    webSearchRouteSource: 'agent',
+    webSources: agentReply.webSources,
+    webSearchError: agentReply.webSearchError,
+    toolTrace: agentReply.toolTrace,
     history: resolvedHistory
   };
 }
@@ -236,28 +151,10 @@ export async function handleChatStream(
   onChunk: (chunk: string) => void
 ) {
   const resolvedHistory = resolveHistory(history, conversationId);
-  const { intent, emotion, matches, confidence, localAnswer, manualRequired, webRoute, webSources, webSearchError, webSearchNote } = await prepareChat(input, resolvedHistory);
-  let answer = '';
-  let answerSource: 'llm' | 'local' = 'local';
-  let model: string | undefined;
-  let fallbackReason = getLlmSettings().apiKey ? '' : '未配置大模型 API Key，已使用本地规则兜底。';
-
-  try {
-    for await (const chunk of streamCustomerReply(input, resolvedHistory, intent, emotion, matches, confidence, webSources, webSearchNote)) {
-      answer += chunk;
-      answerSource = 'llm';
-      model = getLlmSettings().model;
-      fallbackReason = '';
-      onChunk(chunk);
-    }
-  } catch (error) {
-    fallbackReason = error instanceof Error ? error.message : '大模型流式调用失败，已使用本地规则兜底。';
-  }
-
-  if (!answer) {
-    answer = localAnswer;
-    onChunk(answer);
-  }
+  const { intent, emotion, matches, confidence, manualRequired } = await prepareChat(input, resolvedHistory);
+  const agentReply = await generateCustomerAgentReply(input, resolvedHistory, intent, emotion, confidence);
+  const answer = agentReply.answer;
+  onChunk(answer);
 
   const saved = saveChatResult({ input, answer, intent, emotion, matches, manualRequired, conversationId });
 
@@ -271,17 +168,18 @@ export async function handleChatStream(
     manualRequired,
     manualSummary: saved.summary,
     retrieved: matches,
-    answerSource,
-    model,
-    fallbackReason,
-    webSearchUsed: webSources.length > 0,
-    webSearchAttempted: webRoute.needWebSearch,
-    webSearchQuery: webRoute.needWebSearch ? webRoute.query : '',
-    webSearchReason: webRoute.reason,
-    webSearchScope: webRoute.scope,
-    webSearchRouteSource: webRoute.source,
-    webSources,
-    webSearchError,
+    answerSource: 'llm' as const,
+    model: agentReply.model,
+    fallbackReason: '',
+    webSearchUsed: agentReply.webSources.length > 0,
+    webSearchAttempted: agentReply.webSearchAttempted,
+    webSearchQuery: agentReply.webSearchQuery,
+    webSearchReason: agentReply.webSearchReason,
+    webSearchScope: agentReply.webSearchAttempted ? 'external_public_info' : 'local_business_knowledge',
+    webSearchRouteSource: 'agent',
+    webSources: agentReply.webSources,
+    webSearchError: agentReply.webSearchError,
+    toolTrace: agentReply.toolTrace,
     history: resolvedHistory
   };
 }

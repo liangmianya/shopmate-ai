@@ -6,6 +6,7 @@ import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { db } from '../db/database.js';
+import { deleteKnowledgeByIds, deleteProductsByIds } from './dataMaintenanceService.js';
 import { getLlmSettings, getSearchSettings, getSystemPromptSettings } from './settingsService.js';
 import { getAgentSkill, type AgentSkill } from './skillService.js';
 import { searchWeb } from './webSearchService.js';
@@ -657,15 +658,7 @@ function deleteKnowledgeEntries(rawArgs: Record<string, unknown>, riskConfirmed:
     };
   }
 
-  const deleteById = db.prepare('DELETE FROM knowledge_chunks WHERE id = ?');
-  const deleteEmbeddingsById = db.prepare('DELETE FROM knowledge_embeddings WHERE chunk_id = ?');
-
-  db.transaction(() => {
-    for (const item of matches) {
-      deleteEmbeddingsById.run(item.id);
-      deleteById.run(item.id);
-    }
-  })();
+  deleteKnowledgeByIds(matches.map((item) => item.id));
 
   return {
     action: 'deleted',
@@ -890,12 +883,7 @@ function deleteProducts(rawArgs: Record<string, unknown>, riskConfirmed: boolean
     };
   }
 
-  const deleteById = db.prepare('DELETE FROM products WHERE id = ?');
-  db.transaction(() => {
-    for (const product of matches) {
-      deleteById.run(product.id);
-    }
-  })();
+  deleteProductsByIds(matches.map((product) => product.id));
 
   return {
     action: 'deleted',

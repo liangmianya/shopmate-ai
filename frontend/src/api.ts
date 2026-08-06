@@ -32,6 +32,22 @@ export type ProductKnowledge = {
   purchaseUrl: string;
 };
 
+export type MaintenanceSummary = {
+  products: number;
+  knowledgeChunks: number;
+  embeddings: number;
+  orphanEmbeddings: number;
+  suggestions: number;
+  conversations: number;
+  messages: number;
+  channelConversations: number;
+  channelMessages: number;
+  agentTasks: number;
+  toolCallLogs: number;
+  settings: number;
+  agentSkills: number;
+};
+
 export type WebSource = {
   title: string;
   url: string;
@@ -528,6 +544,43 @@ export function createKnowledge(items: Array<{
 export function deleteKnowledge(id: string) {
   return request<{ deleted: QaKnowledge }>(`/api/knowledge/${encodeURIComponent(id)}`, {
     method: 'DELETE'
+  });
+}
+
+export function loadMaintenanceSummary() {
+  return request<{ summary: MaintenanceSummary }>('/api/maintenance/summary');
+}
+
+export function deleteProductsBatch(ids: string[]) {
+  return request<{ requestedCount: number; deletedCount: number; embeddingDeletedCount: number }>('/api/maintenance/products', {
+    method: 'DELETE',
+    body: JSON.stringify({ ids })
+  });
+}
+
+export function deleteKnowledgeBatch(ids: string[]) {
+  return request<{ requestedCount: number; deletedCount: number; embeddingDeletedCount: number }>('/api/maintenance/knowledge', {
+    method: 'DELETE',
+    body: JSON.stringify({ ids })
+  });
+}
+
+export function cleanupOrphanEmbeddings() {
+  return request<{ deletedCount: number }>('/api/maintenance/cleanup-orphans', {
+    method: 'POST'
+  });
+}
+
+export function clearAgentHistory() {
+  return request<{ agentTasks: number; toolCallLogs: number }>('/api/maintenance/agent-history', {
+    method: 'DELETE'
+  });
+}
+
+export function factoryResetData(scope: 'business' | 'factory') {
+  return request<{ scope: 'business' | 'factory'; before: MaintenanceSummary; summary: MaintenanceSummary }>('/api/maintenance/factory-reset', {
+    method: 'POST',
+    body: JSON.stringify({ scope, confirmed: true })
   });
 }
 

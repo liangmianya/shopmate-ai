@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { db } from '../db/database.js';
+import { deleteKnowledgeByIds } from '../services/dataMaintenanceService.js';
 
 const router = Router();
 const now = () => new Date().toISOString();
@@ -107,10 +108,7 @@ router.delete('/:id', (req, res) => {
     return;
   }
 
-  db.transaction(() => {
-    db.prepare('DELETE FROM knowledge_embeddings WHERE chunk_id = ?').run(req.params.id);
-    db.prepare('DELETE FROM knowledge_chunks WHERE id = ?').run(req.params.id);
-  })();
+  deleteKnowledgeByIds([req.params.id]);
 
   res.json({ deleted: mapKnowledgeRow(row) });
 });

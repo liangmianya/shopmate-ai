@@ -24,42 +24,6 @@ type BochaSearchResponse = {
   };
 };
 
-const webIntentWords = [
-  '网上',
-  '最新',
-  '近期',
-  '现在',
-  '官网',
-  '查一下',
-  '搜索',
-  '评价',
-  '测评',
-  '发布',
-  '新闻',
-  '趋势',
-  '口碑',
-  '公开资料',
-  '世界杯',
-  '奥运',
-  '赛程',
-  '决赛',
-  '半决赛',
-  '体育新闻',
-  '比赛结果'
-];
-const internalOnlyWords = ['订单', '库存', '本店价格', '退货', '换货', '售后', '赔偿', '赔付', '地址', '手机号', '物流单号'];
-
-export function shouldUseWebSearch(query: string, localConfidence: number) {
-  const wantsWeb = webIntentWords.some((word) => query.includes(word));
-  const internalOnly = internalOnlyWords.some((word) => query.includes(word));
-
-  if (internalOnly && !wantsWeb) {
-    return false;
-  }
-
-  return wantsWeb || localConfidence < 0.26;
-}
-
 export async function searchWeb(query: string, countOverride?: number): Promise<WebSource[]> {
   const settings = getSearchSettings();
   if (!settings.enabled || !settings.apiKey) {

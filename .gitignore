@@ -14,3 +14,7 @@ Quicker_*.png
 .workbuddy/
 backend/data/app.sqlite
 backend/materials/organized
+tmp_doc_build/
+tmp_ppt_build/
+deliverables/*.inspect.ndjson
+deliverables/*/

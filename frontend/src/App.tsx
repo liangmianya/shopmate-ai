@@ -30,9 +30,10 @@ import {
   Books,
   CaretRight,
   ChartDonut,
-  ChatsCircle,
+  ChatCircleDots,
   FileText as PhosphorFileText,
   GearSix,
+  Headset,
   Moon,
   PaperPlaneTilt,
   Robot,
@@ -51,6 +52,7 @@ import {
   EmbeddingSettings,
   KnowledgeSuggestion,
   LlmSettings,
+  MaintenanceSummary,
   ManagedConversation,
   ManagedConversationMessage,
   OperationAnalytics,
@@ -63,13 +65,18 @@ import {
   confirmAgentTool,
   createKnowledge,
   createProducts,
+  cleanupOrphanEmbeddings,
+  clearAgentHistory,
   deleteKnowledge,
+  deleteKnowledgeBatch,
   deleteProduct,
+  deleteProductsBatch,
   deleteSuggestion,
   loadEmbeddingSettings,
   loadAgentSkills,
   loadManagedConversationMessages,
   loadManagedConversations,
+  loadMaintenanceSummary,
   loadOperationAnalytics,
   loadKnowledge,
   loadLlmSettings,
@@ -79,6 +86,7 @@ import {
   loadSystemPromptSettings,
   loadWecomSettings,
   resetSystemPromptSettings,
+  factoryResetData,
   runAgentTaskStream,
   saveEmbeddingSettings,
   saveLlmSettings,
@@ -144,13 +152,13 @@ const tabs: Array<{
     id: 'customer',
     label: '智能客服',
     description: 'RAG 客户接待',
-    icon: ChatsCircle
+    icon: Headset
   },
   {
     id: 'conversations',
     label: '对话管理',
     description: '接管企微会话',
-    icon: ChatsCircle
+    icon: ChatCircleDots
   },
   {
     id: 'knowledge',
@@ -275,9 +283,39 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'wa
 function EmptyState({ text, icon: Icon = Archive }: { text: string; icon?: typeof Archive }) {
   return (
     <div className="empty">
-      <Icon size={20} />
-      <span>{text}</span>
+      <span className="emptyIcon">
+        <Icon size={24} />
+      </span>
+      <strong>{text}</strong>
     </div>
+  );
+}
+
+function SelectAllButton({
+  checked,
+  disabled,
+  onClick,
+  label = '全选'
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  label?: string;
+}) {
+  return (
+    <button
+      aria-pressed={checked}
+      className={cx('selectAllButton', checked && 'active')}
+      disabled={disabled}
+      onClick={onClick}
+      title={label}
+      type="button"
+    >
+      <span className="selectAllIcon" aria-hidden="true">
+        {checked && <Check size={13} strokeWidth={3} />}
+      </span>
+      <span>{label}</span>
+    </button>
   );
 }
 
@@ -2006,6 +2044,7 @@ function CustomerPage({ onRefresh }: { onRefresh: () => Promise<void> }) {
           )}
         </aside>
       </div>
+
     </section>
   );
 }
@@ -2259,7 +2298,9 @@ function KnowledgePage({
   onCreateQa,
   onCreateProducts,
   onDeleteQa,
-  onDeleteProduct
+  onDeleteProduct,
+  onDeleteQaItems,
+  onDeleteProducts
 }: {
   suggestions: KnowledgeSuggestion[];
   qaItems: QaKnowledge[];
@@ -2281,6 +2322,8 @@ function KnowledgePage({
     purchaseUrl?: string;
   }>) => Promise<{ createdCount: number; skippedCount: number }>;
   onDeleteProduct: (id: string) => Promise<void>;
+  onDeleteQaItems: (ids: string[]) => Promise<{ deletedCount: number }>;
+  onDeleteProducts: (ids: string[]) => Promise<{ deletedCount: number }>;
 }) {
   const [library, setLibrary] = useState<'qa' | 'products'>('qa');
   const [createOpen, setCreateOpen] = useState(false);
@@ -2298,10 +2341,16 @@ function KnowledgePage({
   const [productBatch, setProductBatch] = useState('');
   const [libraryNotice, setLibraryNotice] = useState('');
   const [deletingId, setDeletingId] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<Set<string>>(() => new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
+  const [suggestionBatchDeleting, setSuggestionBatchDeleting] = useState(false);
   const [creatingTarget, setCreatingTarget] = useState<'qa' | 'qaBatch' | 'product' | 'productBatch' | ''>('');
   const visibleQa = qaItems.filter((item) => item.type !== 'product');
   const pendingSuggestions = suggestions.filter((item) => item.status !== 'approved');
   const [expandedSuggestionIds, setExpandedSuggestionIds] = useState<Set<string>>(() => new Set());
+  const selectedPendingSuggestionIds = pendingSuggestions.filter((item) => selectedSuggestionIds.has(item.id)).map((item) => item.id);
+  const allPendingSuggestionsSelected = Boolean(pendingSuggestions.length) && selectedPendingSuggestionIds.length === pendingSuggestions.length;
   const parseTags = (value: string) => value.split(/[,，、]/).map((tag) => tag.trim()).filter(Boolean);
 
   function toggleSuggestion(id: string) {
@@ -2314,6 +2363,92 @@ function KnowledgePage({
       }
       return next;
     });
+  }
+
+  function toggleSelection(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function toggleSelectAll(items: Array<{ id: string }>) {
+    setSelectedIds((current) => current.size === items.length ? new Set() : new Set(items.map((item) => item.id)));
+  }
+
+  function toggleSuggestionSelection(id: string) {
+    setSelectedSuggestionIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function toggleSelectAllSuggestions() {
+    setSelectedSuggestionIds(() => allPendingSuggestionsSelected ? new Set() : new Set(pendingSuggestions.map((item) => item.id)));
+  }
+
+  async function approveSuggestionItem(id: string) {
+    await onApprove(id);
+    setSelectedSuggestionIds((current) => {
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
+  }
+
+  async function deleteSelectedItems() {
+    const ids = [...selectedIds];
+    if (!ids.length || batchDeleting) {
+      return;
+    }
+    const label = library === 'qa' ? '问答' : '商品';
+    if (!window.confirm(`确定删除选中的 ${ids.length} 条${label}吗？关联的检索向量也会一并清理。`)) {
+      return;
+    }
+
+    setBatchDeleting(true);
+    try {
+      const result = library === 'qa' ? await onDeleteQaItems(ids) : await onDeleteProducts(ids);
+      setSelectedIds(new Set());
+      setLibraryNotice(`已删除 ${result.deletedCount} 条${label}。`);
+    } catch {
+      setLibraryNotice(`批量删除${label}失败，请稍后重试。`);
+    } finally {
+      setBatchDeleting(false);
+    }
+  }
+
+  async function deleteSelectedSuggestions() {
+    const ids = selectedPendingSuggestionIds;
+    if (!ids.length || suggestionBatchDeleting) {
+      return;
+    }
+    if (!window.confirm(`确定删除选中的 ${ids.length} 条待审核问答吗？`)) {
+      return;
+    }
+
+    setSuggestionBatchDeleting(true);
+    try {
+      for (const id of ids) {
+        await onDeleteSuggestion(id);
+      }
+      setSelectedSuggestionIds(new Set());
+      setLibraryNotice(`已删除 ${ids.length} 条待审核问答。`);
+    } catch {
+      setLibraryNotice('批量删除待审核问答失败，请稍后重试。');
+    } finally {
+      setSuggestionBatchDeleting(false);
+    }
   }
 
   async function submitQa() {
@@ -2494,6 +2629,11 @@ function KnowledgePage({
     setDeletingId(item.id);
     try {
       await onDeleteSuggestion(item.id);
+      setSelectedSuggestionIds((current) => {
+        const next = new Set(current);
+        next.delete(item.id);
+        return next;
+      });
       setLibraryNotice(`已删除${label}。`);
     } catch {
       setLibraryNotice('删除待审核问答失败，请稍后重试。');
@@ -2515,36 +2655,58 @@ function KnowledgePage({
         }
       />
 
-      <div className="libraryToolbar">
-        <div className="libraryTabs">
-          <button className={cx(library === 'qa' && 'active')} onClick={() => setLibrary('qa')} type="button">
-            问答库
-          </button>
-          <button className={cx(library === 'products' && 'active')} onClick={() => setLibrary('products')} type="button">
-            商品库
-          </button>
-        </div>
-        <button
-          className="primaryButton"
-          onClick={() => {
-            setLibraryNotice('');
-            setCreateOpen(true);
-          }}
-          type="button"
-        >
-          <Plus size={16} />
-          {library === 'qa' ? '新建问答' : '新建商品'}
-        </button>
-      </div>
+      <div className="knowledgeLibrary">
+        <section className="libraryWorkbench">
+          <div className="libraryToolbar">
+            <div className="libraryTabs">
+              <button className={cx(library === 'qa' && 'active')} onClick={() => { setLibrary('qa'); setSelectedIds(new Set()); }} type="button">
+                问答库
+              </button>
+              <button className={cx(library === 'products' && 'active')} onClick={() => { setLibrary('products'); setSelectedIds(new Set()); }} type="button">
+                商品库
+              </button>
+            </div>
+            <div className="libraryActions libraryBatchActions">
+              {selectedIds.size > 0 && (
+                <button
+                  className="ghostButton dangerAction batchDeleteButton"
+                  disabled={batchDeleting}
+                  onClick={deleteSelectedItems}
+                  type="button"
+                >
+                  <Trash2 size={16} />
+                  {batchDeleting ? '删除中' : `删除 ${selectedIds.size} 条`}
+                </button>
+              )}
+              <SelectAllButton
+                checked={library === 'qa' ? Boolean(visibleQa.length) && selectedIds.size === visibleQa.length : Boolean(products.length) && selectedIds.size === products.length}
+                disabled={library === 'qa' ? !visibleQa.length || batchDeleting : !products.length || batchDeleting}
+                onClick={() => toggleSelectAll(library === 'qa' ? visibleQa : products)}
+              />
+              <button
+                className="primaryButton"
+                onClick={() => {
+                  setLibraryNotice('');
+                  setCreateOpen(true);
+                }}
+                type="button"
+              >
+                <Plus size={16} />
+                {library === 'qa' ? '新建问答' : '新建商品'}
+              </button>
+            </div>
+          </div>
 
-      {library === 'qa' ? (
-        <div className="knowledgeLibrary">
-          <section className="libraryMain">
+          {library === 'qa' ? (
+            <section className="libraryMain">
             {visibleQa.length ? (
               visibleQa.map((item) => (
                 <article key={item.id} className="knowledgeItem">
                   <div className="knowledgeItemHeader">
-                    <div>
+                    <label className="itemSelectControl" title={`选择问答：${item.question}`}>
+                      <input checked={selectedIds.has(item.id)} onChange={() => toggleSelection(item.id)} type="checkbox" />
+                    </label>
+                    <div className="knowledgeItemTitle">
                       <span>{item.type}</span>
                       <strong>{item.question}</strong>
                     </div>
@@ -2570,77 +2732,16 @@ function KnowledgePage({
             ) : (
               <EmptyState text="问答库暂无内容。" icon={ClipboardCheck} />
             )}
-          </section>
-
-          <aside className="librarySide">
-            <div className="panel flat">
-              <div className="panelHeader">
-                <div>
-                  <span className="iconBadge"><ClipboardCheck size={18} /></span>
-                  <h2>待审核问答</h2>
-                </div>
-              </div>
-
-              <div className="suggestionStack">
-                {pendingSuggestions.length ? (
-                  pendingSuggestions.map((item) => {
-                    const expanded = expandedSuggestionIds.has(item.id);
-                    return (
-                    <article key={item.id} className={cx('suggestion', item.status, !expanded && 'collapsed')}>
-                      <div className="suggestionHeader">
-                        <button
-                          aria-expanded={expanded}
-                          aria-label={`${expanded ? '收起' : '展开'}待审核问答：${item.title}`}
-                          className="suggestionExpandButton"
-                          onClick={() => toggleSuggestion(item.id)}
-                          title={expanded ? '收起' : '展开'}
-                          type="button"
-                        >
-                          <ChevronRight size={14} className={expanded ? 'open' : ''} />
-                        </button>
-                        <div className="suggestionTitle">
-                          <span>待审核</span>
-                          <strong>{item.title}</strong>
-                        </div>
-                        <div className="suggestionActions">
-                          <button className="smallButton" onClick={() => onApprove(item.id)} type="button">
-                            <FileText size={15} />
-                            入库
-                          </button>
-                          <button
-                            aria-label={`删除待审核问答：${item.title}`}
-                            className="iconButton danger"
-                            disabled={deletingId === item.id}
-                            onClick={() => deleteSuggestionItem(item)}
-                            title="删除建议"
-                            type="button"
-                          >
-                            <Trash2 size={15} />
-                          </button>
-                        </div>
-                      </div>
-                      {expanded && (
-                        <div className="suggestionBody">
-                          <p>{item.content}</p>
-                          <small>{item.reason}</small>
-                        </div>
-                      )}
-                    </article>
-                    );
-                  })
-                ) : (
-                  <EmptyState text="暂无待审核问答。" icon={ClipboardCheck} />
-                )}
-              </div>
-            </div>
-          </aside>
-        </div>
-      ) : (
-        <div className="productKnowledgeGrid">
+            </section>
+          ) : (
+            <div className="productKnowledgeGrid">
           {products.length ? (
             products.map((product) => (
               <article key={product.id} className="productKnowledgeItem">
                 <div className="knowledgeItemHeader">
+                  <label className="itemSelectControl" title={`选择商品：${product.name}`}>
+                    <input checked={selectedIds.has(product.id)} onChange={() => toggleSelection(product.id)} type="checkbox" />
+                  </label>
                   <div>
                     <span>{product.category}</span>
                     <strong>{product.name}</strong>
@@ -2657,25 +2758,120 @@ function KnowledgePage({
                   </button>
                 </div>
                 <div className="productFacts">
-                  <span>品牌：{product.brand}</span>
-                  <span>库存：{product.stock}</span>
-                  <span>价格：¥{product.price}</span>
+                  <span><small>品牌</small><strong>{product.brand}</strong></span>
+                  <span><small>库存</small><strong>{product.stock}</strong></span>
+                  <span><small>价格</small><strong>¥{product.price}</strong></span>
                 </div>
                 <p>{product.features}</p>
-                {product.purchaseUrl && (
-                  <a className="productLink" href={product.purchaseUrl} target="_blank" rel="noreferrer">
-                    <Link size={14} />
-                    购买链接
-                  </a>
-                )}
-                <small>{product.scene}</small>
+                <div className="productCardFooter">
+                  {product.scene && <small>{product.scene}</small>}
+                  {product.purchaseUrl && (
+                    <a className="productLink" href={product.purchaseUrl} target="_blank" rel="noreferrer">
+                      <Link size={14} />
+                      购买链接
+                    </a>
+                  )}
+                </div>
               </article>
             ))
           ) : (
             <EmptyState text="商品库暂无内容。" icon={Package} />
           )}
+            </div>
+          )}
+        </section>
+
+        <aside className="librarySide">
+          <div className="panel flat">
+            <div className="panelHeader">
+              <div>
+                <span className="iconBadge"><ClipboardCheck size={18} /></span>
+                <h2>待审核问答</h2>
+              </div>
+              <div className={cx('suggestionPanelActions', selectedPendingSuggestionIds.length === 0 && 'idle')}>
+                <SelectAllButton
+                  checked={allPendingSuggestionsSelected}
+                  disabled={!pendingSuggestions.length || suggestionBatchDeleting}
+                  onClick={toggleSelectAllSuggestions}
+                />
+                {selectedPendingSuggestionIds.length > 0 && (
+                <span className="batchDeleteSlot">
+                  <button
+                    className="ghostButton dangerAction batchDeleteButton"
+                    disabled={suggestionBatchDeleting}
+                    onClick={deleteSelectedSuggestions}
+                    type="button"
+                  >
+                    <Trash2 size={16} />
+                    {suggestionBatchDeleting ? '删除中' : `删除 ${selectedPendingSuggestionIds.length} 条`}
+                  </button>
+                </span>
+                )}
+              </div>
+            </div>
+
+            <div className="suggestionStack">
+              {pendingSuggestions.length ? (
+                pendingSuggestions.map((item) => {
+                  const expanded = expandedSuggestionIds.has(item.id);
+                  return (
+                  <article key={item.id} className={cx('suggestion', item.status, !expanded && 'collapsed')}>
+                    <div className="suggestionHeader">
+                      <button
+                        aria-expanded={expanded}
+                        aria-label={`${expanded ? '收起' : '展开'}待审核问答：${item.title}`}
+                        className="suggestionExpandButton"
+                        onClick={() => toggleSuggestion(item.id)}
+                        title={expanded ? '收起' : '展开'}
+                        type="button"
+                      >
+                        <ChevronRight size={14} className={expanded ? 'open' : ''} />
+                      </button>
+                      <label className="itemSelectControl suggestionSelectControl" title={`选择待审核问答：${item.title}`}>
+                        <input
+                          checked={selectedSuggestionIds.has(item.id)}
+                          disabled={suggestionBatchDeleting}
+                          onChange={() => toggleSuggestionSelection(item.id)}
+                          type="checkbox"
+                        />
+                      </label>
+                      <div className="suggestionTitle">
+                        <span>待审核</span>
+                        <strong>{item.title}</strong>
+                      </div>
+                      <div className="suggestionActions">
+                        <button className="smallButton" disabled={suggestionBatchDeleting} onClick={() => approveSuggestionItem(item.id)} type="button">
+                          <FileText size={15} />
+                          入库
+                        </button>
+                        <button
+                          aria-label={`删除待审核问答：${item.title}`}
+                          className="iconButton danger"
+                          disabled={deletingId === item.id || suggestionBatchDeleting}
+                          onClick={() => deleteSuggestionItem(item)}
+                          title="删除建议"
+                          type="button"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    </div>
+                    {expanded && (
+                      <div className="suggestionBody">
+                        <p>{item.content}</p>
+                        <small>{item.reason}</small>
+                      </div>
+                    )}
+                  </article>
+                  );
+                })
+              ) : (
+                <EmptyState text="暂无待审核问答。" icon={ClipboardCheck} />
+              )}
+            </div>
+          </div>
+        </aside>
         </div>
-      )}
 
       {createOpen && (
         <div className="modalOverlay" role="presentation" onMouseDown={() => setCreateOpen(false)}>
@@ -2798,10 +2994,12 @@ function KnowledgePage({
 
 function SettingsPage({
   themeMode,
-  onThemeChange
+  onThemeChange,
+  onFactoryReset
 }: {
   themeMode: ThemeMode;
   onThemeChange: (theme: ThemeMode) => void;
+  onFactoryReset: (scope: 'business' | 'factory') => Promise<unknown>;
 }) {
   const [llmSettings, setLlmSettings] = useState<LlmSettings>();
   const [embeddingSettings, setEmbeddingSettings] = useState<EmbeddingSettings>();
@@ -2818,7 +3016,8 @@ function SettingsPage({
   const [searchApiKey, setSearchApiKey] = useState('');
   const [searchCount, setSearchCount] = useState('5');
   const [systemPrompt, setSystemPrompt] = useState('');
-  const [busyTarget, setBusyTarget] = useState<'llm' | 'embedding' | 'search' | 'systemPrompt' | ''>('');
+  const [maintenanceSummary, setMaintenanceSummary] = useState<MaintenanceSummary>();
+  const [busyTarget, setBusyTarget] = useState<'llm' | 'embedding' | 'search' | 'systemPrompt' | 'maintenance' | ''>('');
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
@@ -2838,6 +3037,15 @@ function SettingsPage({
         setSystemPrompt(promptSettings.prompt);
       })
       .catch(() => setNotice('读取系统配置失败，请确认后端服务已启动。'));
+  }, []);
+
+  async function refreshMaintenanceSummary() {
+    const result = await loadMaintenanceSummary();
+    setMaintenanceSummary(result.summary);
+  }
+
+  useEffect(() => {
+    refreshMaintenanceSummary().catch(() => setNotice('读取数据维护统计失败，请确认后端服务已启动。'));
   }, []);
 
   async function submitLlm() {
@@ -2924,6 +3132,63 @@ function SettingsPage({
       setNotice('已恢复通用电商的默认业务系统提示词。');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '恢复默认失败。');
+    } finally {
+      setBusyTarget('');
+    }
+  }
+
+  async function removeOrphanEmbeddings() {
+    setBusyTarget('maintenance');
+    setNotice('');
+    try {
+      const result = await cleanupOrphanEmbeddings();
+      await refreshMaintenanceSummary();
+      setNotice(result.deletedCount ? `已清理 ${result.deletedCount} 条失效向量。` : '没有发现失效向量。');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '清理失效向量失败。');
+    } finally {
+      setBusyTarget('');
+    }
+  }
+
+  async function removeAgentHistory() {
+    if (!window.confirm('确定清空所有 Agent 任务和工具调用记录吗？此操作不可撤销。')) {
+      return;
+    }
+    setBusyTarget('maintenance');
+    setNotice('');
+    try {
+      const result = await clearAgentHistory();
+      await refreshMaintenanceSummary();
+      setNotice(`已清空 ${result.agentTasks} 条 Agent 任务和 ${result.toolCallLogs} 条工具日志。`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '清空 Agent 历史失败。');
+    } finally {
+      setBusyTarget('');
+    }
+  }
+
+  async function resetData(scope: 'business' | 'factory') {
+    const label = scope === 'factory' ? '完全恢复出厂' : '清空业务数据';
+    const confirmation = scope === 'factory'
+      ? window.prompt('将清空业务数据、数据库配置与导入技能。请输入“恢复出厂”确认。')
+      : window.prompt('将清空商品、知识、会话、建议、任务和向量数据。请输入“清空数据”确认。');
+    const expected = scope === 'factory' ? '恢复出厂' : '清空数据';
+    if (confirmation !== expected) {
+      return;
+    }
+    setBusyTarget('maintenance');
+    setNotice('');
+    try {
+      await onFactoryReset(scope);
+      if (scope === 'factory') {
+        window.location.reload();
+        return;
+      }
+      await refreshMaintenanceSummary();
+      setNotice(`已完成${label}。`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : `${label}失败。`);
     } finally {
       setBusyTarget('');
     }
@@ -3173,6 +3438,15 @@ function SettingsPage({
               <span className="iconBadge"><Search size={18} /></span>
               <h2>联网搜索</h2>
             </div>
+            <label className={cx('settingsSwitchLine', searchEnabled && 'active')} title="启用博查联网搜索">
+              <input
+                aria-label="启用博查联网搜索"
+                checked={searchEnabled}
+                onChange={(event) => setSearchEnabled(event.target.checked)}
+                type="checkbox"
+              />
+              <i aria-hidden="true" />
+            </label>
           </div>
 
           <form
@@ -3182,11 +3456,6 @@ function SettingsPage({
               submitSearch();
             }}
           >
-            <label className="checkLine">
-              <input checked={searchEnabled} onChange={(event) => setSearchEnabled(event.target.checked)} type="checkbox" />
-              <span>启用博查联网搜索</span>
-            </label>
-
             <label>
               <span>Search Base URL</span>
               <input
@@ -3259,6 +3528,46 @@ function SettingsPage({
           </div>
         </aside>
       </div>
+
+      <section className="panel flat dataMaintenancePanel">
+        <div className="panelHeader">
+          <div>
+            <span className="iconBadge"><Archive size={18} /></span>
+            <h2>数据维护</h2>
+          </div>
+          <span className={cx('promptStatus', maintenanceSummary?.orphanEmbeddings ? 'customized' : '')}>
+            {maintenanceSummary?.orphanEmbeddings ? `${maintenanceSummary.orphanEmbeddings} 条待清理` : '数据正常'}
+          </span>
+        </div>
+
+        <div className="maintenanceStats">
+          <Stat label="商品" value={`${maintenanceSummary?.products ?? '-'}`} />
+          <Stat label="知识" value={`${maintenanceSummary?.knowledgeChunks ?? '-'}`} />
+          <Stat label="会话" value={`${maintenanceSummary?.conversations ?? '-'}`} />
+          <Stat label="任务日志" value={`${(maintenanceSummary?.agentTasks ?? 0) + (maintenanceSummary?.toolCallLogs ?? 0)}`} />
+          <Stat label="检索向量" value={`${maintenanceSummary?.embeddings ?? '-'}`} />
+          <Stat label="失效向量" value={`${maintenanceSummary?.orphanEmbeddings ?? '-'}`} tone={maintenanceSummary?.orphanEmbeddings ? 'warn' : 'good'} />
+        </div>
+
+        <div className="maintenanceActions">
+          <button className="ghostButton" disabled={busyTarget === 'maintenance'} onClick={removeOrphanEmbeddings} type="button">
+            <RefreshCcw size={16} />
+            清理失效向量
+          </button>
+          <button className="ghostButton" disabled={busyTarget === 'maintenance'} onClick={removeAgentHistory} type="button">
+            <Trash2 size={16} />
+            清空 Agent 历史
+          </button>
+          <button className="ghostButton dangerAction" disabled={busyTarget === 'maintenance'} onClick={() => resetData('business')} type="button">
+            <Archive size={16} />
+            清空业务数据
+          </button>
+          <button className="primaryButton danger" disabled={busyTarget === 'maintenance'} onClick={() => resetData('factory')} type="button">
+            <AlertTriangle size={16} />
+            完全恢复出厂
+          </button>
+        </div>
+      </section>
     </section>
   );
 }
@@ -3390,6 +3699,7 @@ function ChannelsPage() {
           </div>
         </aside>
       </div>
+
     </section>
   );
 }
@@ -3793,6 +4103,28 @@ export function App() {
     await refreshMeta();
   }
 
+  async function handleDeleteQaItems(ids: string[]) {
+    const result = await deleteKnowledgeBatch(ids);
+    await refreshMeta();
+    return result;
+  }
+
+  async function handleDeleteProducts(ids: string[]) {
+    const result = await deleteProductsBatch(ids);
+    await refreshMeta();
+    return result;
+  }
+
+  async function handleFactoryReset(scope: 'business' | 'factory') {
+    const result = await factoryResetData(scope);
+    if (scope === 'factory') {
+      window.localStorage.removeItem('shopmate-theme');
+      setThemeMode('light');
+    }
+    await refreshMeta();
+    return result;
+  }
+
   useEffect(() => {
     refreshMeta().catch(() => undefined);
   }, []);
@@ -3869,9 +4201,11 @@ export function App() {
             onCreateProducts={handleCreateProducts}
             onDeleteQa={handleDeleteQa}
             onDeleteProduct={handleDeleteProduct}
+            onDeleteQaItems={handleDeleteQaItems}
+            onDeleteProducts={handleDeleteProducts}
           />
         )}
-        {activeTab === 'settings' && <SettingsPage themeMode={themeMode} onThemeChange={setThemeMode} />}
+        {activeTab === 'settings' && <SettingsPage themeMode={themeMode} onThemeChange={setThemeMode} onFactoryReset={handleFactoryReset} />}
         {activeTab === 'channels' && <ChannelsPage />}
         {activeTab === 'analysis' && <ConversationAnalysisPage />}
         {activeTab === 'reports' && <OperationReportsPage />}

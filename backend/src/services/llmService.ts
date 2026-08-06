@@ -78,10 +78,10 @@ export async function generateCustomerReply(
   confidence: number,
   webSources: WebSource[] = [],
   webSearchNote = ''
-): Promise<LlmReply | undefined> {
+): Promise<LlmReply> {
   const { apiKey, baseUrl, model } = getLlmSettings();
   if (!apiKey) {
-    return undefined;
+    throw new Error('未配置大模型 API Key，无法生成客服回复。');
   }
 
   const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -131,7 +131,7 @@ export async function* streamCustomerReply(
 ): AsyncGenerator<string> {
   const { apiKey, baseUrl, model } = getLlmSettings();
   if (!apiKey) {
-    return;
+    throw new Error('未配置大模型 API Key，无法生成流式客服回复。');
   }
 
   const response = await fetch(`${baseUrl}/chat/completions`, {

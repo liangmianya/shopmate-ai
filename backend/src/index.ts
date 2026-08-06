@@ -9,6 +9,7 @@ import analyticsRouter from './routes/analytics.js';
 import knowledgeRouter from './routes/knowledge.js';
 import productsRouter from './routes/products.js';
 import settingsRouter from './routes/settings.js';
+import maintenanceRouter from './routes/maintenance.js';
 import wecomRouter from './routes/wecom.js';
 import { startWecomAibotConnection } from './services/wecomAibotLongConnectionService.js';
 
@@ -31,6 +32,7 @@ app.use('/api/analytics', analyticsRouter);
 app.use('/api/knowledge', knowledgeRouter);
 app.use('/api/products', productsRouter);
 app.use('/api/settings', settingsRouter);
+app.use('/api/maintenance', maintenanceRouter);
 app.use('/api/channels/wecom', wecomRouter);
 
 app.listen(port, () => {
